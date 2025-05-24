@@ -13,14 +13,13 @@ your_project_folder/
 ├── evaluatePopulation.m                # Fitness evaluation logic (based on SINR)
 ├── SINREvaluation.m                    # SINR and connectivity computation
 │
-├── initializePopulation_ppp.m          # Population init using Matern Point Process
+├── initializePopulation_ppp.m          # Population initialization using Matern Point Process
 ├── initializePopulation_sobol.m        # (Optional) Sobol initialization
+├── initializePopulation_uniform.m        # Population initialization using uniformly distributed sampling
 │
 ├── selectParents.m                     # Tournament parent selection
 ├── mutate.m                            # Gaussian + Bernoulli mutation
 ├── crossover_blend.m                   # Blend crossover operator
-├── crossover_sbx.m                     # Simulated Binary Crossover (optional)
-├── crossover.m                         # Arithmetic crossover (optional)
 │
 ├── reflectToBounds.m                   # Ensures individuals stay within bounds
 ├── clampToBounds.m                     # Clamps values between bounds
