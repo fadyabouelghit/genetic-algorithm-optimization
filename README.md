@@ -14,8 +14,7 @@ your_project_folder/
 ├── SINREvaluation.m                    # SINR and connectivity computation
 │
 ├── initializePopulation_ppp.m          # Population initialization using Matern Point Process
-├── initializePopulation_sobol.m        # (Optional) Sobol initialization
-├── initializePopulation_uniform.m        # Population initialization using uniformly distributed sampling
+├── initializePopulation_uniform.m      # Population initialization using uniformly distributed sampling
 │
 ├── selectParents.m                     # Tournament parent selection
 ├── mutate.m                            # Gaussian + Bernoulli mutation
