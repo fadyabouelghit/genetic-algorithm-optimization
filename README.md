@@ -60,6 +60,19 @@ your_project_folder/
   - Statistics and Machine Learning Toolbox
 
 ---
+## Important Notes
+
+Before running the main script, **please ensure** that:
+
+- All project folders (containing the `.m` files)
+- The QuaDRiGa source directory
+
+are added to your MATLAB path. You can do this from the MATLAB command window:
+
+```matlab
+addpath(genpath(pwd));                % Adds all project subfolders
+addpath(genpath('path/to/quadriga')); % Replace with the actual path to your QuaDRiGa source
+
 
 ## How to Run
 
