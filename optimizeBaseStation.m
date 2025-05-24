@@ -55,7 +55,6 @@ function headers = create_headers(n_fbs)
 end
 
 
-% population = initializePopulation_sobol(params.populationSize, params.bounds);
 population = initializePopulation_ppp(params.populationSize, params.bounds, params.numBS);
 % population = initializePopulation_uniform(params.populationSize, params.bounds, params.numBS);
 
@@ -131,8 +130,6 @@ for gen = 1:params.numGenerations
         parents = selectParents(population, fitness, 2);
         
         % Crossover
-%         [child1, child2, crossoverFlag] = crossover(parents(1,:), parents(2,:), params.crossoverProb, params.bounds);
-%         [child1, child2, crossoverFlag] = crossover_sbx(parents(1,:), parents(2,:), params.crossoverProb, params.bounds);
         [child1, child2, crossoverFlag] = crossover_blend(parents(1,:), parents(2,:), params.crossoverProb, params.bounds);
         crossoverCount = crossoverCount + crossoverFlag;
         
