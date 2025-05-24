@@ -1,6 +1,6 @@
 # Flying Base Station Optimization using Genetic Algorithms
 
-This project implements a Genetic Algorithm (GA) to optimize the **3D location** and **transmission power** of **Flying Base Stations (FBSs)**. The goal is to maximize user connectivity while minimizing transmission power, using a realistic SINR evaluation framework based on **QuaDRiGa** propagation models.
+This project implements a Genetic Algorithm to optimize the **3D location** and **transmission power** of **Flying Base Stations (FBSs)**. The goal is to maximize user connectivity using a realistic SINR evaluation framework based on **QuaDRiGa** propagation models.
 
 ---
 
