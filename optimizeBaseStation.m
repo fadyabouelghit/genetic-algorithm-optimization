@@ -61,7 +61,6 @@ population = initializePopulation_ppp(params.populationSize, params.bounds, para
 
 headers = create_headers(params.numBS);
 initialData = [zeros(params.populationSize,1) population]; % Gen 0
-% writetable(array2table(initialData, 'VariableNames', headers), filename, 'WriteMode', 'overwrite');
 
 mbs_x = mbs_params(1,:);
 mbs_y = mbs_params(2,:);
@@ -154,7 +153,6 @@ for gen = 1:params.numGenerations
     
     population = newPopulation;
     genData = [gen*ones(params.populationSize,1) newPopulation];
-    % writetable(array2table(genData, 'VariableNames', headers), filename, 'WriteMode', 'append');
     
     
     % Early stopping check
@@ -289,7 +287,6 @@ if params.verbose > 0
         x_unique = unique_xy(:,1);
         y_unique = unique_xy(:,2);
     
-        % Draw arrows with smaller arrowheads
         for i = 1:(size(unique_xy,1)-1)
             quiver(x_unique(i), y_unique(i), ...
                    x_unique(i+1) - x_unique(i), ...
@@ -297,7 +294,6 @@ if params.verbose > 0
                    0, 'Color', colors(k,:), 'LineWidth', 1.5, 'MaxHeadSize', 0.2);
         end
     
-        % Scatter for legend handle
         trajectory_handles(k) = scatter(x_unique, y_unique, 50, colors(k,:), 'filled');
     
         % Offset for start text
@@ -308,14 +304,12 @@ if params.verbose > 0
             'FontSize', 15, 'FontWeight', 'bold', 'Color', colors(k,:), ...
             'VerticalAlignment', 'bottom', 'HorizontalAlignment', 'left');
     
-        % Offset and size for point number labels
         for i = 1:length(x_unique)
             text(x_unique(i) + 10, y_unique(i) + 10, sprintf('%d', i), ...
                 'FontSize', 13, 'Color', colors(k,:), ...
                 'VerticalAlignment', 'bottom', 'HorizontalAlignment', 'right');
         end
     
-        % Mark start and end points
         plot(x_unique(1), y_unique(1), 's', 'MarkerSize', 12, 'LineWidth', 2, 'Color', colors(k,:));
         plot(x_unique(end), y_unique(end), '*', 'MarkerSize', 12, 'LineWidth', 2, 'Color', colors(k,:));
     end
@@ -327,7 +321,6 @@ if params.verbose > 0
 
     % power vs height plot
     figure;
-    % Extract height and power from history
     heights = history.bestIndividuals(:, 3);  % Assuming 3rd column = height
     powers  = history.bestIndividuals(:, 4);  % Assuming 4th column = power
     generations = 1:length(heights);          % X-axis: generation index
