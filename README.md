@@ -1,6 +1,6 @@
 # Flying Base Station Optimization using Genetic Algorithms
 
-This project implements a Genetic Algorithm to optimize the **3D location** and **transmission power** of **Flying Base Stations (FBSs)**. The goal is to maximize user connectivity using a realistic SINR evaluation framework based on **QuaDRiGa** propagation models.
+This project implements a Genetic Algorithm (GA) to optimize the **3D location** and **transmission power** of **Flying Base Stations (FBSs)**. The goal is to maximize user connectivity while minimizing transmission power, using a realistic SINR evaluation framework based on **QuaDRiGa** propagation models.
 
 ---
 
@@ -13,12 +13,14 @@ your_project_folder/
 ├── evaluatePopulation.m                # Fitness evaluation logic (based on SINR)
 ├── SINREvaluation.m                    # SINR and connectivity computation
 │
-├── initializePopulation_ppp.m          # Population initialization using Matern Point Process
-├── initializePopulation_uniform.m      # Population initialization using uniformly distributed sampling
+├── initializePopulation_ppp.m          # Population init using Matern Point Process
+├── initializePopulation_sobol.m        # (Optional) Sobol initialization
 │
 ├── selectParents.m                     # Tournament parent selection
 ├── mutate.m                            # Gaussian + Bernoulli mutation
 ├── crossover_blend.m                   # Blend crossover operator
+├── crossover_sbx.m                     # Simulated Binary Crossover (optional)
+├── crossover.m                         # Arithmetic crossover (optional)
 │
 ├── reflectToBounds.m                   # Ensures individuals stay within bounds
 ├── clampToBounds.m                     # Clamps values between bounds
@@ -60,19 +62,6 @@ your_project_folder/
   - Statistics and Machine Learning Toolbox
 
 ---
-## Important Notes
-
-Before running the main script, **please ensure** that:
-
-- All project folders (containing the `.m` files)
-- The QuaDRiGa source directory
-
-are added to your MATLAB path. You can do this from the MATLAB command window:
-
-```matlab
-addpath(genpath(pwd));                % Adds all project subfolders
-addpath(genpath('path/to/quadriga')); % Replace with the actual path to your QuaDRiGa source
-
 
 ## How to Run
 

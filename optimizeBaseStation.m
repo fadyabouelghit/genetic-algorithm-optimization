@@ -18,6 +18,8 @@ function [bestIndividual, bestFitness, history] = optimizeBaseStation(l, contain
 % Setup diagnostics
 defaultParams.verbose = 1;
 params = mergeParams(defaultParams, params);
+% 1 -> connectivity / 2 -> avg sum rate
+targetIdx = 1; 
 
 % Initialize history tracking
 history = struct(...
@@ -29,7 +31,9 @@ history = struct(...
     'bestIndividuals', zeros(params.numGenerations, size(params.bounds, 1)), ...
     'crossovers', zeros(params.numGenerations, 1), ...
     'mutations', zeros(params.numGenerations, 1), ...
-    'time', struct('total', 0, 'generation', zeros(params.numGenerations, 1)) ...
+    'time', struct('total', 0, 'generation', zeros(params.numGenerations, 1)), ...
+    'avgVariables', zeros(params.numGenerations, size(params.bounds,1)), ...  % Average value for each variable
+    'currentAvgReward', zeros(params.numGenerations, 1) ...         % Current average reward (same as avgFitness but explicit)
 );
 
 totalTimer = tic;
@@ -55,12 +59,14 @@ function headers = create_headers(n_fbs)
 end
 
 
-population = initializePopulation_ppp(params.populationSize, params.bounds, params.numBS);
-% population = initializePopulation_uniform(params.populationSize, params.bounds, params.numBS);
+% population = initializePopulation_sobol(params.populationSize, params.bounds);
+% population = initializePopulation_ppp(params.populationSize, params.bounds, params.numBS);
+population = initializePopulation_uniform(params.populationSize, params.bounds, params.numBS);
 
 
 headers = create_headers(params.numBS);
 initialData = [zeros(params.populationSize,1) population]; % Gen 0
+% writetable(array2table(initialData, 'VariableNames', headers), filename, 'WriteMode', 'overwrite');
 
 mbs_x = mbs_params(1,:);
 mbs_y = mbs_params(2,:);
@@ -79,7 +85,9 @@ for gen = 1:params.numGenerations
         end
     end
     
-    [fitness, evalDetails] = evaluatePopulation(l, population, params.verbose, params.numBS, params.spaceLimit ,containsMbs, mbs_params, antennaObjectMbs, params.bounds);
+    % taregtIdx = 1; % optimize for connected users
+    % taregtIdx = 2; % optimize for sum rate
+    [fitness, evalDetails] = evaluatePopulation(l, population, params.verbose, params.numBS, params.spaceLimit ,containsMbs, mbs_params, antennaObjectMbs, params.bounds, params.mbsCache, targetIdx);
     
     % Track population statistics
     history.bestFitness(gen) = max(fitness);
@@ -91,7 +99,9 @@ for gen = 1:params.numGenerations
     [bestFitness, bestIdx] = max(fitness);
     bestIndividual = population(bestIdx, :);
     history.bestIndividuals(gen, :) = bestIndividual;
-
+    
+    history.avgVariables(gen, :) = mean(population, 1);
+    
     
     % Display generation summary
     if params.verbose > 0
@@ -129,11 +139,13 @@ for gen = 1:params.numGenerations
         parents = selectParents(population, fitness, 2);
         
         % Crossover
+%         [child1, child2, crossoverFlag] = crossover(parents(1,:), parents(2,:), params.crossoverProb, params.bounds);
+%         [child1, child2, crossoverFlag] = crossover_sbx(parents(1,:), parents(2,:), params.crossoverProb, params.bounds);
         [child1, child2, crossoverFlag] = crossover_blend(parents(1,:), parents(2,:), params.crossoverProb, params.bounds);
         crossoverCount = crossoverCount + crossoverFlag;
         
         % Mutation
-        [child, mutationFlags] = mutate(child1, params.mutationProb, params.bounds, params.mutationScale, gen, params);
+        [child, mutationFlags] = mutate(child1, params.mutationProb, params.bounds, params.mutationScale, gen, params, []);
         mutationCount = mutationCount + sum(mutationFlags);
         
         % Add to new population
@@ -153,7 +165,8 @@ for gen = 1:params.numGenerations
     
     population = newPopulation;
     genData = [gen*ones(params.populationSize,1) newPopulation];
-    
+    % writetable(array2table(genData, 'VariableNames', headers), filename, 'WriteMode', 'append');
+    population
     
     % Early stopping check
     % if gen > 8 && std(history.bestFitness(gen-7:gen)) < 0.01
@@ -174,12 +187,14 @@ if params.verbose > 0
     fprintf('Best Fitness: %.2f users\n', bestFitness);
     
     fprintf('The best individual performance: \n') 
-    [~, ~, numUsers, transmittedPower] = SINREvaluation(...,
+    [~, ~, numUsers, transmittedPower, avg_rate_connected_bpsHz] = SINREvaluation(...,
                                                         l, bestIndividual(5:5:end), bestIndividual(1:5:end), bestIndividual(2:5:end), bestIndividual(3:5:end), params.numBS, ...,
-                                                        bestIndividual(4:5:end), mbs_x, mbs_y, mbs_height, mbs_power, ...,
-                                                        0, params.spaceLimit, 0, params.spaceLimit, 100, 5, containsMbs, antennaObjectMbs);
+                                                        bestIndividual(4:5:end), mbs_y, mbs_x, mbs_height, mbs_power, ...,
+                                                        0, params.spaceLimit(1), 0, params.spaceLimit(2), 1000, 5, containsMbs, antennaObjectMbs, params.mbsCache);
     fprintf('Total Connected Users: %d\n', numUsers);
     fprintf('Total Transmitted Power: %.2f W\n', transmittedPower);
+    fprintf('Avg. Sum Rate: %.2f W\n', avg_rate_connected_bpsHz);
+
     
     fprintf('Final Parameters:\n');
     
@@ -274,6 +289,7 @@ if params.verbose > 0
     
     colors = lines(num_pairs);
     trajectory_handles = gobjects(num_pairs, 1);
+    scatter(mbs_y,mbs_x, 'marker','x','MarkerEdgeColor','black', 'MarkerFaceColor','black')
     
     for k = 1:num_pairs
         col_x = (k-1)*step + 1;
@@ -287,6 +303,7 @@ if params.verbose > 0
         x_unique = unique_xy(:,1);
         y_unique = unique_xy(:,2);
     
+        % Draw arrows with smaller arrowheads
         for i = 1:(size(unique_xy,1)-1)
             quiver(x_unique(i), y_unique(i), ...
                    x_unique(i+1) - x_unique(i), ...
@@ -294,6 +311,7 @@ if params.verbose > 0
                    0, 'Color', colors(k,:), 'LineWidth', 1.5, 'MaxHeadSize', 0.2);
         end
     
+        % Scatter for legend handle
         trajectory_handles(k) = scatter(x_unique, y_unique, 50, colors(k,:), 'filled');
     
         % Offset for start text
@@ -304,23 +322,26 @@ if params.verbose > 0
             'FontSize', 15, 'FontWeight', 'bold', 'Color', colors(k,:), ...
             'VerticalAlignment', 'bottom', 'HorizontalAlignment', 'left');
     
+        % Offset and size for point number labels
         for i = 1:length(x_unique)
             text(x_unique(i) + 10, y_unique(i) + 10, sprintf('%d', i), ...
                 'FontSize', 13, 'Color', colors(k,:), ...
                 'VerticalAlignment', 'bottom', 'HorizontalAlignment', 'right');
         end
     
+        % Mark start and end points
         plot(x_unique(1), y_unique(1), 's', 'MarkerSize', 12, 'LineWidth', 2, 'Color', colors(k,:));
         plot(x_unique(end), y_unique(end), '*', 'MarkerSize', 12, 'LineWidth', 2, 'Color', colors(k,:));
     end
     
-    lgd = legend(trajectory_handles, {'FBS 1', 'FBS 2'}, 'Location', 'northwest');
-    set(lgd, 'FontSize', 14, 'FontWeight', 'bold', 'FontName', 'Arial');
+    % lgd = legend(trajectory_handles, {'FBS 1', 'FBS 2'}, 'Location', 'northwest');
+    % set(lgd, 'FontSize', 14, 'FontWeight', 'bold', 'FontName', 'Arial');
 
 
 
     % power vs height plot
     figure;
+    % Extract height and power from history
     heights = history.bestIndividuals(:, 3);  % Assuming 3rd column = height
     powers  = history.bestIndividuals(:, 4);  % Assuming 4th column = power
     generations = 1:length(heights);          % X-axis: generation index

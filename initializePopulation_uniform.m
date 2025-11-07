@@ -5,6 +5,18 @@ numParams = size(bounds,1);
 population = zeros(popSize, numParams);
 
 for i = 1:numParams
+    
+    % if i == 1 || i == 2
+    %     lb = 0;
+    %     ub = 300;
+    % elseif i == 3
+    %     lb = 20;
+    %     ub = 50;
+    % else
+        % lb = bounds(i,1);
+        % ub = bounds(i,2);
+    % end
+
     lb = bounds(i,1);
     ub = bounds(i,2);
 
