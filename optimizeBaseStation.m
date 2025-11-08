@@ -59,8 +59,6 @@ function headers = create_headers(n_fbs)
 end
 
 
-% population = initializePopulation_sobol(params.populationSize, params.bounds);
-% population = initializePopulation_ppp(params.populationSize, params.bounds, params.numBS);
 population = initializePopulation_uniform(params.populationSize, params.bounds, params.numBS);
 
 
@@ -72,6 +70,9 @@ mbs_x = mbs_params(1,:);
 mbs_y = mbs_params(2,:);
 mbs_height = mbs_params(3,:);
 mbs_power = mbs_params(4,:);
+
+globalBestFitness = -inf;
+globalBestIndividual = population(1,:);
 
 
 for gen = 1:params.numGenerations
@@ -99,6 +100,11 @@ for gen = 1:params.numGenerations
     [bestFitness, bestIdx] = max(fitness);
     bestIndividual = population(bestIdx, :);
     history.bestIndividuals(gen, :) = bestIndividual;
+    
+    if bestFitness > globalBestFitness
+        globalBestFitness = bestFitness;
+        globalBestIndividual = bestIndividual;
+    end
     
     history.avgVariables(gen, :) = mean(population, 1);
     
@@ -129,7 +135,8 @@ for gen = 1:params.numGenerations
     end
     
     % Create new population
-    newPopulation = [bestIndividual; zeros(params.populationSize-1, size(params.bounds, 1))];
+    eliteIndividual = bestIndividual;
+    newPopulation = [eliteIndividual; zeros(params.populationSize-1, size(params.bounds, 1))];
     crossoverCount = 0;
     mutationCount = 0;
     
@@ -166,7 +173,7 @@ for gen = 1:params.numGenerations
     population = newPopulation;
     genData = [gen*ones(params.populationSize,1) newPopulation];
     % writetable(array2table(genData, 'VariableNames', headers), filename, 'WriteMode', 'append');
-    population
+    % population
     
     % Early stopping check
     % if gen > 8 && std(history.bestFitness(gen-7:gen)) < 0.01
@@ -178,8 +185,8 @@ for gen = 1:params.numGenerations
 end
 
 history.time.total = toc(totalTimer);
-[bestFitness, bestIdx] = max(fitness);
-bestIndividual = population(bestIdx, :);
+bestFitness = globalBestFitness;
+bestIndividual = globalBestIndividual;
 
 if params.verbose > 0
     fprintf('\n=== Optimization Complete ===\n');
@@ -187,13 +194,13 @@ if params.verbose > 0
     fprintf('Best Fitness: %.2f users\n', bestFitness);
     
     fprintf('The best individual performance: \n') 
-    [~, ~, numUsers, transmittedPower, avg_rate_connected_bpsHz] = SINREvaluation(...,
-                                                        l, bestIndividual(5:5:end), bestIndividual(1:5:end), bestIndividual(2:5:end), bestIndividual(3:5:end), params.numBS, ...,
-                                                        bestIndividual(4:5:end), mbs_y, mbs_x, mbs_height, mbs_power, ...,
-                                                        0, params.spaceLimit(1), 0, params.spaceLimit(2), 1000, 5, containsMbs, antennaObjectMbs, params.mbsCache);
+    [~, ~, numUsers, transmittedPower, avg_rate_connected_bpsHz] = SINREvaluation( ...
+        l, bestIndividual(5:5:end), bestIndividual(1:5:end), bestIndividual(2:5:end), bestIndividual(3:5:end), params.numBS, ...
+        bestIndividual(4:5:end), mbs_y, mbs_x, mbs_height, mbs_power, ...
+        0, params.spaceLimit(1), 0, params.spaceLimit(2), 1000, 5, containsMbs, antennaObjectMbs, params.mbsCache);
     fprintf('Total Connected Users: %d\n', numUsers);
     fprintf('Total Transmitted Power: %.2f W\n', transmittedPower);
-    fprintf('Avg. Sum Rate: %.2f W\n', avg_rate_connected_bpsHz);
+    fprintf('Avg. Sum Rate: %.2f bps/Hz\n', avg_rate_connected_bpsHz);
 
     
     fprintf('Final Parameters:\n');
@@ -258,8 +265,9 @@ if params.verbose > 0
     hold on;
     colors = lines(numBS);
     for bs = 1:numBS
-        x = history.bestIndividuals(1:gen, (bs-1)*4 + 1);
-        y = history.bestIndividuals(1:gen, (bs-1)*4 + 2);
+        colBase = (bs-1)*5;
+        x = history.bestIndividuals(1:gen, colBase + 1);
+        y = history.bestIndividuals(1:gen, colBase + 2);
         plot(x, y, 'o-', 'Color', colors(bs,:), 'DisplayName', sprintf('BS%d', bs));
     end
     xlabel('X Position (m)');
@@ -271,7 +279,12 @@ if params.verbose > 0
 
     % Altitude Distribution
     subplot(2,2,4);
-    boxplot(reshape(history.bestIndividuals(1:gen, 3:4:end), [], numBS), ...
+    altitudeData = zeros(gen, numBS);
+    for bs = 1:numBS
+        colBase = (bs-1)*5;
+        altitudeData(:, bs) = history.bestIndividuals(1:gen, colBase + 3);
+    end
+    boxplot(altitudeData, ...
         'Labels', arrayfun(@(n)sprintf('BS%d',n), 1:numBS, 'UniformOutput', false));
     ylabel('Altitude (m)');
     title('Base Station Altitude Distribution');
@@ -280,7 +293,7 @@ if params.verbose > 0
     
     % trajectory plot 
     step = 5; 
-    num_pairs = floor(size(history.bestIndividuals, 2) / step);
+    num_pairs = params.numBS;
     
     figure; 
     hold on; axis equal; grid on;
@@ -341,24 +354,33 @@ if params.verbose > 0
 
     % power vs height plot
     figure;
-    % Extract height and power from history
-    heights = history.bestIndividuals(:, 3);  % Assuming 3rd column = height
-    powers  = history.bestIndividuals(:, 4);  % Assuming 4th column = power
-    generations = 1:length(heights);          % X-axis: generation index
+    heights = history.bestIndividuals(1:gen, 3:5:end);
+    powers  = history.bestIndividuals(1:gen, 4:5:end);
+    generations = 1:gen;
     
+    colors = lines(numBS);
     yyaxis left
-    plot(generations, heights, '-o', 'LineWidth', 2);
+    hold on;
+    for bs = 1:numBS
+        plot(generations, heights(:, bs), '-o', 'Color', colors(bs,:), 'DisplayName', sprintf('Height BS%d', bs));
+    end
     ylabel('Height (m)');
-    ylim([min(heights)-5, max(heights)+5]);  % Optional padding
+    minHeight = min(heights(:));
+    maxHeight = max(heights(:));
+    ylim([minHeight-5, maxHeight+5]);
     
     yyaxis right
-    plot(generations, powers, '-s', 'LineWidth', 2);
+    for bs = 1:numBS
+        plot(generations, powers(:, bs), '--', 'Color', colors(bs,:), 'DisplayName', sprintf('Power BS%d', bs));
+    end
     ylabel('Transmitted Power (W)');
-    ylim([min(powers)-0.5, max(powers)+0.5]);  % Optional padding
+    minPower = min(powers(:));
+    maxPower = max(powers(:));
+    ylim([minPower-0.5, maxPower+0.5]);
     
     xlabel('Generation');
     title('Progression of Height and Power over Generations');
-    legend('Height', 'Power');
+    legend('Location', 'bestoutside');
     grid on;
 
 end
