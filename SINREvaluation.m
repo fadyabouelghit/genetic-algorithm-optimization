@@ -32,6 +32,7 @@ function [user_positions, df_users_table, total_connected_users, total_transmitt
 
     total_connected_users = sum(df_users_table.is_connected);
     total_transmitted_pwr = sum(tx_power .* power_status);
+    % total_transmitted_pwr = sum(tx_power);
 end
 
 function user_positions = generate_user_positions(x_min, x_max, y_min, y_max, num_users)

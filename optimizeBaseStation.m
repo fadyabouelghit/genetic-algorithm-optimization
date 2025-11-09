@@ -111,7 +111,7 @@ for gen = 1:params.numGenerations
     
     % Display generation summary
     if params.verbose > 0
-        fprintf('Fitness: Best=%.2f, Avg=%.2f, Std=%.2f\n', ...
+        fprintf('Fitness: Best=%.3f, Avg=%.2f, Std=%.2f\n', ...
             history.bestFitness(gen), history.avgFitness(gen), history.stdFitness(gen));
             
         for fb = 1:params.numBS

@@ -3,7 +3,11 @@ function [fitness, details] = evaluatePopulation(l, population, verbose, n_fbs, 
 % based on normalized number of connected users and transmission power.
 
     fitness = zeros(size(population,1), 1);
-    details = struct('numUsers', zeros(size(population,1), 1), 'transmittedPower', zeros(size(population,1), 1));
+    numIndividuals = size(population,1);
+    details = struct(...
+        'numUsers', zeros(numIndividuals, 1), ...
+        'transmittedPower', zeros(numIndividuals, 1), ...
+        'avgRate', zeros(numIndividuals, 1));
 
     alpha = 0; 
     maxPower = bounds(4,2); 
@@ -22,6 +26,10 @@ function [fitness, details] = evaluatePopulation(l, population, verbose, n_fbs, 
             x, y, z, n_fbs, power, ...
             mbs_y, mbs_x, mbs_height, mbs_power, ...
             0, spaceLimit(1), 0, spaceLimit(2), maxUsers, 5, containsMbs, antennaObjectMbs, mbsCache);
+
+        details.numUsers(i) = numUsers;
+        details.transmittedPower(i) = transmittedPower;
+        details.avgRate(i) = avg_rate_connected_bpsHz;
 
         if targetIdx == 1
             norm_numUsers = numUsers / maxUsers;

@@ -10,6 +10,7 @@ your_project_folder/
 ├── optimize_base_station_ga.m          # Main script to run the optimization
 │
 ├── optimizeBaseStation.m               # Core GA loop
+├── optimizeBaseStationMoga.m           # Multi-objective GA (Pareto front)
 ├── evaluatePopulation.m                # Fitness evaluation logic (based on SINR)
 ├── SINREvaluation.m                    # SINR and connectivity computation
 │
@@ -36,6 +37,7 @@ your_project_folder/
 1. **`optimize_base_station_ga.m`**
    - Initializes antennas and GA parameters
    - Calls `optimizeBaseStation(...)`
+   - Optionally launches `optimizeBaseStationMoga(...)` to trace the Pareto front
 
 2. **`optimizeBaseStation.m`**
    - Initializes population via `initializePopulation_ppp(...)`
@@ -86,3 +88,12 @@ params = struct(...
 );
 ```
 
+### Observing the Pareto Front (MOGA)
+
+The script now enables the multi-objective GA branch by default (`runMoga = true`). This path invokes `optimizeBaseStationMoga`, which:
+
+- Treats connected users (maximize) and transmitted power (minimize) as separate objectives through NSGA-II.
+- Builds and prints the final Pareto-optimal table (`ConnectedUsers`, `TransmittedPowerW`, `AvgRatebpsHz`).
+- Generates a Pareto front plot showing how solutions evolve per generation.
+
+To skip the multi-objective stage, set `runMoga = false` inside `optimize_base_station_ga.m`.
