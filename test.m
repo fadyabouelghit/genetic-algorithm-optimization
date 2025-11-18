@@ -1,31 +1,4 @@
-% record configs with GA
-% === Optimization Complete ===
-% Total time: 16.9 minutes
-% Best Fitness: 0.86 users
-% The best individual performance: 
-% Total Connected Users: 86
-% Total Transmitted Power: 10.50 W
-% Final Parameters:
-%                         Value 
-%                         ______
-% 
-%     BS1 X (m)           401.92
-%     BS1 Y (m)           621.36
-%     BS1 Z (m)           49.166
-%     BS1 Power (W)         10.5
-%     BS1 Power Status         1 
 
-% 
-% BS1 X (m)           1317.2
-% BS1 Y (m)           115.85
-% BS1 Z (m)            24.79
-% BS1 Power (W)        9.416
-% BS1 Power Status         1
-% BS2 X (m)           1236.9
-% BS2 Y (m)           1475.5
-% BS2 Z (m)           37.236
-% BS2 Power (W)       8.5464
-% BS2 Power Status         1
 
 % no_fbs = 2;
 % tx_x = [1317.2, 1236.9];
@@ -34,28 +7,38 @@
 % tx_power = [9.41, 8.546];
 % power_status = ones(1,no_fbs);
 
+    % 
+    % BS1 X (m)           72.579
+    % BS1 Y (m)           356.31
+    % BS1 Z (m)           56.741
+    % BS1 Power (W)         9.62
+    % BS1 Power Status         1
+    % BS2 X (m)           77.406
+    % BS2 Y (m)           283.79
+    % BS2 Z (m)           24.139
+    % BS2 Power (W)       9.9492
+    % BS2 Power Status         1
 
-% Connectivity
-% no_fbs = 1;
-% tx_x = 264.93;
-% tx_y = 88.624;
-% tx_height = 27.307;
-% tx_power = 10.385;   
-% power_status = 1;
+no_fbs = 1;
+tx_x = 198.73;
+tx_y = 192.09;
+tx_height = 21.899;
+tx_power = 9.1958;   
+power_status = 1;
 
-% avg sum rate 
-no_fbs = 2;
-tx_x = [72.579 77.406];
-tx_y = [356.31 283.79];
-tx_height = [56.741 24.139];
-tx_power = [9.62 9.9492];   
-power_status = [1 1];
+% no_fbs = 2;
+% tx_x = [72.579 77.406];
+% tx_y = [356.31 283.79];
+% tx_height = [56.741 24.139];
+% tx_power = [9.62 9.949];   
+% power_status = [1 1];
 
 
 fbsAntenna = setup_antenna();
 mbsAntenna = setup_antenna();
 
 numMbs = 1;
+containsMbs = 1;
 W = 2000; H = 1500;      
 margin = 100;            
 ISD = 500;               
@@ -101,7 +84,7 @@ l = setup_antenna();
 
 
 containsMbs = 1;
-[user_positions, df_users_table, total_connected_users, total_transmitted_pwr, avg_rate_connected_bpsHz] = SINREvaluation(...,
+[user_positions, df_users_table, total_connected_users, total_transmitted_pwr, avg_rate_connected_bpsHz, ~, ~] = SINREvaluation(...,
                                                                                                 l,power_status, tx_x, tx_y, tx_height, no_fbs, tx_power, ...,
                                                                                                 mbs_params(2,:), mbs_params(1,:), mbs_height, mbs_power,...,
                                                                                                 subset_x_min, subset_x_max, subset_y_min, subset_y_max, num_users, ..., 

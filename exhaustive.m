@@ -26,7 +26,7 @@ l = setup_antenna();
 l2 = l;
 
 containsMbs = 1;
-[user_positions, df_users_table, total_connected_users, total_transmitted_pwr] =  SINREvaluation(...,
+[user_positions, df_users_table, total_connected_users, total_transmitted_pwr, ~, ~, ~] =  SINREvaluation(...,
                                                                                                 l,power_status, tx_x, tx_y, tx_height, no_fbs, tx_power, ...,
                                                                                                 mbs_x, mbs_y, mbs_height, mbs_power,...,
                                                                                                 subset_x_min, subset_x_max, subset_y_min, subset_y_max, num_users, ..., 
@@ -92,7 +92,7 @@ parfor i = 1:n_points
     y_grid = position_list(i, 2);
     h = position_list(i, 3);
 
-    [~, ~, connected_users, ~] = SINREvaluation(...,
+    [~, ~, connected_users, ~, ~, ~, ~] = SINREvaluation(...,
         l, power_status, x_grid, y_grid, h, no_fbs, tx_power, ...
         mbs_x, mbs_y, mbs_height, mbs_power, ...
         subset_x_min, subset_x_max, subset_y_min, subset_y_max, num_users, ...

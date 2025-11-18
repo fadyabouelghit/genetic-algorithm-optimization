@@ -1,4 +1,4 @@
-function [user_positions, df_users_table, total_connected_users, total_transmitted_pwr, avg_rate_connected_bpsHz] = SINREvaluation(antenna_object, power_status, tx_x, tx_y, tx_height, no_fbs, tx_power, mbs_x, mbs_y, mbs_height, mbs_power, subset_x_min, subset_x_max, subset_y_min, subset_y_max, num_users, threshold, containsMbs, antennaObjectMbs, mbsCache)
+function [user_positions, df_users_table, total_connected_users, total_transmitted_pwr, avg_rate_connected_bpsHz, fbs_connected_users, mbs_connected_users] = SINREvaluation(antenna_object, power_status, tx_x, tx_y, tx_height, no_fbs, tx_power, mbs_x, mbs_y, mbs_height, mbs_power, subset_x_min, subset_x_max, subset_y_min, subset_y_max, num_users, threshold, containsMbs, antennaObjectMbs, mbsCache)
 % SINREVALUATION Computes the SINR values for users based on FBS and optional MBS parameters.
 %
 %   INPUTS:
@@ -31,8 +31,10 @@ function [user_positions, df_users_table, total_connected_users, total_transmitt
         subset_x_min, subset_x_max, subset_y_min, subset_y_max, threshold, containsMbs, antennaObjectMbs, mbsCache);
 
     total_connected_users = sum(df_users_table.is_connected);
-    total_transmitted_pwr = sum(tx_power .* power_status);
-    % total_transmitted_pwr = sum(tx_power);
+    fbs_connected_users = sum(df_users_table.is_connected & df_users_table.FBS_connection_index >= 1 & df_users_table.FBS_connection_index <= no_fbs);
+    mbs_connected_users = total_connected_users - fbs_connected_users;
+    % total_transmitted_pwr = sum(tx_power .* power_status);
+    total_transmitted_pwr = sum(tx_power);
 end
 
 function user_positions = generate_user_positions(x_min, x_max, y_min, y_max, num_users)

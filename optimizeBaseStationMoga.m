@@ -6,22 +6,46 @@ function [paretoFront, history] = optimizeBaseStationMoga(l, containsMbs, antenn
 
     defaultParams = struct(...
         'verbose', 1, ...
-        'tournamentSize', 3 ...
+        'tournamentSize', 3, ...
+        'fitnessWeights', struct('beta', 1, 'gamma', 1, 'epsilon', 1e-3), ...
+        'initialPopulationSize', [], ...
+        'maxUsers', 1000, ...
+        'sinrThreshold', 5 ...
     );
     params = mergeParams(defaultParams, params);
+    if isempty(params.initialPopulationSize)
+        params.initialPopulationSize = params.populationSize;
+    end
+    if params.initialPopulationSize < params.populationSize
+        error('initialPopulationSize (%d) must be >= populationSize (%d).', ...
+            params.initialPopulationSize, params.populationSize);
+    end
 
     populationSize = params.populationSize;
     numParams = size(params.bounds, 1);
     targetIdx = 1; % for population evaluation: 1 - connectivity & power, 2 - avg rate
 
-    population = initializePopulation_uniform(populationSize, params.bounds, params.numBS);
+    population = initializePopulation_uniform(params.initialPopulationSize, params.bounds, params.numBS);
+
+    evalParams = params.fitnessWeights;
+    evalParams.maxUsers = params.maxUsers;
+    evalParams.sinrThreshold = params.sinrThreshold;
 
     [~, details] = evaluatePopulation(l, population, params.verbose, params.numBS, ...
-        params.spaceLimit, containsMbs, mbs_params, antennaObjectMbs, params.bounds, params.mbsCache, targetIdx);
+        params.spaceLimit, containsMbs, mbs_params, antennaObjectMbs, params.bounds, params.mbsCache, targetIdx, evalParams);
     objectives = buildObjectives(details);
 
     [fronts, ranks] = fastNonDominatedSort(objectives);
     crowding = computeCrowdingDistances(objectives, fronts);
+
+    if params.initialPopulationSize > populationSize
+        survivorIdx = environmentalSelection(fronts, crowding, populationSize);
+        population = population(survivorIdx, :);
+        details = sliceDetails(details, survivorIdx);
+        objectives = objectives(survivorIdx, :);
+        [fronts, ranks] = fastNonDominatedSort(objectives);
+        crowding = computeCrowdingDistances(objectives, fronts);
+    end
 
     history = initHistory(params.numGenerations);
 
@@ -32,8 +56,11 @@ function [paretoFront, history] = optimizeBaseStationMoga(l, containsMbs, antenn
 
         [offspring, crossovers, mutations] = createOffspring(population, params, ranks, crowding, gen);
 
+        evalParams = params.fitnessWeights;
+        evalParams.maxUsers = params.maxUsers;
+        evalParams.sinrThreshold = params.sinrThreshold;
         [~, offspringDetails] = evaluatePopulation(l, offspring, params.verbose, params.numBS, ...
-            params.spaceLimit, containsMbs, mbs_params, antennaObjectMbs, params.bounds, params.mbsCache, targetIdx);
+            params.spaceLimit, containsMbs, mbs_params, antennaObjectMbs, params.bounds, params.mbsCache, targetIdx, evalParams);
         offspringObjectives = buildObjectives(offspringDetails);
 
         combinedPopulation = [population; offspring];
