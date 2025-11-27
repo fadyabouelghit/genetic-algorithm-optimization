@@ -30,7 +30,8 @@ function [fitness, details] = evaluatePopulation(l, population, verbose, n_fbs, 
         'transmittedPower', zeros(numIndividuals, 1), ...
         'avgRate', zeros(numIndividuals, 1), ...
         'fbsUsers', zeros(numIndividuals, 1), ...
-        'mbsUsers', zeros(numIndividuals, 1));
+        'mbsUsers', zeros(numIndividuals, 1), ...
+        'activeFbs', zeros(numIndividuals, 1));
 
     powerBounds = bounds(4:5:end, :);
     maxPower = sum(powerBounds(:,2));
@@ -54,6 +55,7 @@ function [fitness, details] = evaluatePopulation(l, population, verbose, n_fbs, 
         details.avgRate(i) = avg_rate_connected_bpsHz;
         details.fbsUsers(i) = fbsUsers;
         details.mbsUsers(i) = mbsUsers;
+        details.activeFbs(i) = sum(power_status >= 0.5);
 
         if targetIdx == 1
             norm_numUsers = numUsers / maxUsers;
