@@ -1,7 +1,6 @@
 logs/
 venv/
 .venv/
-*.ipynb
 *.asv
 
 cache_mbs_maps/
