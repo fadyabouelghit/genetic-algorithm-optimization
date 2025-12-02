@@ -23,6 +23,7 @@ function [bestIndividual, bestFitness, history] = optimizeBaseStation(l, contain
     defaultParams.maxUsers = 1000;
     defaultParams.sinrThreshold = 5;
     defaultParams.enableLogging = true;
+    defaultParams.enablePerformancePlotting = false;
     defaultParams.logFile = '';
     params = mergeParams(defaultParams, params);
 if isempty(params.initialPopulationSize)
@@ -299,6 +300,7 @@ if params.verbose > 0
         'VariableNames', {'Value'}, ...
         'RowNames', paramNames));
     
+    if params.enablePerformancePlotting
     % Enhanced visualization
     figure('Name', 'Optimization Results', 'Position', [100 100 1200 800]);
     
@@ -461,6 +463,8 @@ if params.verbose > 0
     title('Progression of Height and Power over Generations');
     legend('Location', 'bestoutside');
     grid on;
+
+    end
 
 end
 

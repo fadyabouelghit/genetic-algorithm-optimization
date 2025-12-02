@@ -81,7 +81,7 @@ function [paretoFront, history] = optimizeBaseStationMoga(l, containsMbs, antenn
         history.crossovers(gen) = crossovers;
         history.mutations(gen) = mutations;
         history.fronts{gen} = captureFront(population, details, fronts);
-        history.populationObjectives{gen} = [details.numUsers, details.transmittedPower];
+        history.populationObjectives{gen} = [details.numUsers, details.transmittedPower, details.activeFbs];
         history.ranks{gen} = ranks;
 
         if params.verbose > 0
@@ -96,8 +96,8 @@ function [paretoFront, history] = optimizeBaseStationMoga(l, containsMbs, antenn
                 fprintf('  No feasible Pareto points captured this generation.\n');
             else
                 [~, bestIdx] = max(currentFront.users - currentFront.power);
-                fprintf('  Pareto front size: %d | best trade-off users=%.0f, power=%.2f W\n', ...
-                    numel(currentFront.users), currentFront.users(bestIdx), currentFront.power(bestIdx));
+                fprintf('  Pareto front size: %d | best trade-off users=%.0f, power=%.2f W, active FBS=%d\n', ...
+                    numel(currentFront.users), currentFront.users(bestIdx), currentFront.power(bestIdx), currentFront.activeFbs(bestIdx));
             end
         end
     end
@@ -120,7 +120,7 @@ function history = initHistory(numGenerations)
 end
 
 function objectives = buildObjectives(details)
-    objectives = [-details.numUsers, details.transmittedPower];
+    objectives = [-details.numUsers, details.transmittedPower, details.activeFbs];
 end
 
 function [offspring, crossoverCount, mutationCount] = createOffspring(population, params, ranks, crowding, gen)
@@ -303,7 +303,7 @@ end
 
 function frontStruct = captureFront(population, details, fronts)
     if isempty(fronts) || isempty(fronts{1})
-        frontStruct = struct('individuals', [], 'users', [], 'power', [], 'avgRate', []);
+        frontStruct = struct('individuals', [], 'users', [], 'power', [], 'avgRate', [], 'activeFbs', []);
         return;
     end
     idx = fronts{1};
@@ -311,7 +311,8 @@ function frontStruct = captureFront(population, details, fronts)
         'individuals', population(idx, :), ...
         'users', details.numUsers(idx), ...
         'power', details.transmittedPower(idx), ...
-        'avgRate', details.avgRate(idx));
+        'avgRate', details.avgRate(idx), ...
+        'activeFbs', details.activeFbs(idx));
 end
 
 function plotParetoHistory(history)
@@ -325,18 +326,20 @@ function plotParetoHistory(history)
         if isempty(front.users)
             continue;
         end
-        scatter(front.power, front.users, 50, colors(gen, :), 'filled', ...
+        scatter3(front.power, front.users, front.activeFbs, 50, colors(gen, :), 'filled', ...
             'DisplayName', sprintf('Gen %d', gen));
     end
 
     finalFront = history.fronts{end};
     if ~isempty(finalFront.users)
-        [sortedPower, order] = sort(finalFront.power);
-        plot(sortedPower, finalFront.users(order), '-k', 'LineWidth', 1.5, 'DisplayName', 'Final Front');
+        [sortedPower, order] = sortrows([finalFront.power(:), finalFront.users(:), finalFront.activeFbs(:)], [1 3]);
+        plot3(sortedPower(:,1), sortedPower(:,2), sortedPower(:,3), '-k', 'LineWidth', 1.5, 'DisplayName', 'Final Front');
     end
 
     xlabel('Transmitted Power (W)');
     ylabel('Connected Users');
-    title('Pareto Front Evolution (Power vs Connectivity)');
+    zlabel('Active FBS Count');
+    title('Pareto Front Evolution (Power vs Connectivity vs Active FBS)');
     legend('Location', 'best');
+    view(35, 25);
 end
