@@ -3,6 +3,7 @@ logs/
 venv/
 .venv/
 *.asv
+*.pyc
 
 cache_mbs_maps/
 ppo_logs/
