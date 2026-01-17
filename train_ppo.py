@@ -191,14 +191,15 @@ class FlyingBaseStationEnv(gym.Env):
         self.param_upper_single = np.array([self.W, self.H, 150.0, 10.5, 1.0], dtype=np.float32)
         self.param_lower = np.tile(self.param_lower_single, self.num_fbs)
         self.param_upper = np.tile(self.param_upper_single, self.num_fbs)
+        self._global_obs_low = np.array([-1.0, -1.0], dtype=np.float32)
+        self._global_obs_high = np.array([1.0, 1.0], dtype=np.float32)
         self.min_power = 0.0
         self.max_power = float(self.param_upper_single[3]) * self.num_fbs
+        self._max_users_norm = float(max(self.max_users, 1))
 
-        self.observation_space = gym.spaces.Box(
-            low=self.param_lower,
-            high=self.param_upper,
-            dtype=np.float32,
-        )
+        obs_low = np.concatenate([self.param_lower, self._global_obs_low])
+        obs_high = np.concatenate([self.param_upper, self._global_obs_high])
+        self.observation_space = gym.spaces.Box(low=obs_low, high=obs_high, dtype=np.float32)
         self.action_space = gym.spaces.Box(
             low=-1.0,
             high=1.0,
@@ -211,7 +212,14 @@ class FlyingBaseStationEnv(gym.Env):
             self._action_scale_factor * np.tile(single_scale, (self.num_fbs, 1))
         ).astype(np.float32)
         self._state = None
+        self._global_state = np.zeros(2, dtype=np.float32)
+        self._last_total_connected_frac = 0.0
+        self._last_fbs_connected_frac = 0.0
         self._steps = 0
+
+    def _get_obs(self) -> np.ndarray:
+        base = np.asarray(self._state, dtype=np.float32).reshape(-1)
+        return np.concatenate([base, self._global_state]).astype(np.float32)
 
     def _configure_world(self):
         """Clone the GA world: antennas, MBS cache, bounds."""
@@ -261,7 +269,7 @@ class FlyingBaseStationEnv(gym.Env):
                 self.num_mbs_requested,
                 nargout=2,
             )
-            
+
         (
             mbs_params,
             self.antenna_mbs,
@@ -322,7 +330,10 @@ class FlyingBaseStationEnv(gym.Env):
         power_state = self.np_random.integers(0, 2, size=(self.num_fbs, 1))
         state = np.concatenate([cont_state, power_state], axis=1).astype(np.float32)
         self._state = state.reshape(-1)
-        return self._state.copy(), {}
+        self._global_state = np.zeros(2, dtype=np.float32)
+        self._last_total_connected_frac = 0.0
+        self._last_fbs_connected_frac = 0.0
+        return self._get_obs(), {}
 
     def step(self, action: np.ndarray):
         self._steps += 1
@@ -375,6 +386,14 @@ class FlyingBaseStationEnv(gym.Env):
         fbs_term = (fbs_share + weights.epsilon) ** weights.fbs_exponent
         reward = (1 - weights.fbs_weight) * base + weights.fbs_weight * fbs_term
 
+        total_connected_frac = float(total_connected) / self._max_users_norm
+        fbs_connected_frac = float(fbs_conn) / self._max_users_norm
+        total_delta = total_connected_frac - self._last_total_connected_frac
+        fbs_delta = fbs_connected_frac - self._last_fbs_connected_frac
+        self._global_state = np.array([fbs_delta, total_delta], dtype=np.float32)
+        self._last_total_connected_frac = total_connected_frac
+        self._last_fbs_connected_frac = fbs_connected_frac
+
         terminated = total_connected >= self.num_users
         truncated = self._steps >= self.max_episode_steps
         info = {
@@ -384,9 +403,11 @@ class FlyingBaseStationEnv(gym.Env):
             "total_power": total_power,
             "avg_rate": avg_rate,
             "user_positions": user_positions,
+            "fbs_delta": fbs_delta,
+            "total_delta": total_delta,
         }
 
-        return self._state.astype(np.float32), reward, terminated, truncated, info
+        return self._get_obs(), reward, terminated, truncated, info
 
     def render(self):
         return None
