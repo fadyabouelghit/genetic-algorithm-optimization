@@ -1,4 +1,4 @@
-function cache = precompute_mbs_power_maps(mbs_params, antennaObjectMbs, subset, scenario, mode, ue_height, cacheDir)
+function cache = precompute_mbs_power_maps(mbs_params, antennaObjectMbs, subset, scenario, mode, ue_height, cacheDir, returnCell)
 % Precompute (or load) per-MBS power maps and store them in a cache struct.
 % Inputs:
 %   mbs_params        : 4×N [x; y; z; power]
@@ -26,13 +26,13 @@ function cache = precompute_mbs_power_maps(mbs_params, antennaObjectMbs, subset,
         mode char
         ue_height double = 1.5
         cacheDir char = ''
+        returnCell logical = false
     end
 
     N = size(mbs_params, 2);
     if ~isempty(cacheDir) && ~exist(cacheDir,'dir')
         mkdir(cacheDir);
     end
-
     cache = repmat(struct('key',[], 'x',[], 'y',[], 'z',[], 'power',[], ...
                           'scenario',[], 'subset',[], 'ue_height',[], 'mode',[], ...
                           'x_coords',[], 'y_coords',[], 'map',[]), 1, N);
@@ -108,6 +108,9 @@ function cache = precompute_mbs_power_maps(mbs_params, antennaObjectMbs, subset,
                 warning('MBS #%d grid differs from others. Power maps may not align exactly.', i);
             end
         end
+    end
+    if returnCell
+        cache = arrayfun(@(s) s, cache, 'UniformOutput', false);
     end
 end
 

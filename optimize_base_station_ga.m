@@ -14,12 +14,13 @@ clc;
 fbsAntenna = setup_antenna();
 mbsAntenna = setup_antenna();
 
-numMbs = 1;  
-containsMbs = 1;
-W = 2000; H = 1500;      
+numMbs = 2;  
+W = 4000; H = 3000;      
 margin = 100;            % edge distance threshold
 ISD = 500;               % inter-site distance
 [xs, ys] = generate_hex_sites(W, H, ISD, margin, numMbs);
+xs = [1000,3500];
+ys = [1000,2200];
 mbs_height   = 25;
 mbs_power    = 20;
 [mbs_params, antennaObjectMbs, containsMbs, numMbs] = ...
@@ -42,21 +43,24 @@ cache = precompute_mbs_power_maps( ...
 );
 
 disp(['Generated ', num2str(numMbs), ' MBSs']);
-% mbs_x = [300];       
-% mbs_y = [350];     
-% mbs_height = [25];        
-% mbs_power = [20]; 
-% mbs_params = [mbs_x; mbs_y; mbs_height; mbs_power];
 
 
 numBS = 2; % number of FBSs
-% Optimization parameters
+containsMbs = 1;
 params = struct(...
-    'populationSize', 20, ...
-    'numGenerations', 15, ...
+    'enablePerformancePlotting', true, ...
+    'enableLogging', false, ...
+    'plotTrajectory', false, ...
+    'initialPopulationSize', 30, ...
+    'populationSize', 15, ...
+    'numGenerations', 10, ...
     'crossoverProb', 0.3, ...
     'mutationProb', 0.8, ...
-    'mutationScale', 0.25, ...
+    'mutationScale', 0.2, ...
+    'fitnessWeights', struct('beta', 0.8, 'gamma', 0.1, 'fbsWeight', 0.4, 'fbsExponent', 1), ...
+    'maxUsers', 1000, ...
+    'sinrThreshold', 5, ...
+    'logFile', '', ...
     'numBS', numBS, ...
     'bounds', repmat([0 W; 0 H; 20 150; 7 10.5; 0 1], numBS, 1), ...
     'spaceLimit', [W,H], ...
@@ -64,8 +68,50 @@ params = struct(...
     'verbose', 1 ...
 );
 
-[bestInd, bestFit, history] = optimizeBaseStation( ...
-    fbsAntenna, containsMbs, antennaObjectMbs, mbs_params, params);
+runMoga = false;
+
+if not(runMoga)
+    [bestInd, bestFit, history] = optimizeBaseStation( ...
+        fbsAntenna, containsMbs, antennaObjectMbs, mbs_params, params);
+end
+
+% ---- Multi-objective GA (connectivity vs. power) ----
+if runMoga
+    fprintf('\n=== Launching Multi-Objective GA (MOGA) ===\n');
+    mogaParams = params;
+    mogaParams.enableLogging = false;
+    mogaParams.numGenerations = max(30, params.numGenerations);
+    mogaParams.tournamentSize = 3;
+    mogaParams.populationSize = 100; 
+    mogaParams.mutationScale = 0.4;
+    mogaParams.crossoverProb = 0.3;
+    mogaParams.mutationProb = 0.7;
+    
+    mogaParams.beta = 1;
+    mogaParams.gamma = 0;
+    mogaParams.fbsWeight = 0.4;
+    mogaParams.fbsExponent = 1;
+    
+
+
+    if mogaParams.initialPopulationSize < mogaParams.populationSize
+        mogaParams.initialPopulationSize = mogaParams.populationSize;
+    end
+    [paretoFront, mogaHistory] = optimizeBaseStationMoga( ...
+        fbsAntenna, containsMbs, antennaObjectMbs, mbs_params, mogaParams);
+
+    if ~isempty(paretoFront.users)
+        paretoTable = table( ...
+            paretoFront.users(:), ...
+            paretoFront.power(:), ...
+            paretoFront.avgRate(:), ...
+            'VariableNames', {'ConnectedUsers', 'TransmittedPowerW', 'AvgRatebpsHz'});
+        disp('Final Pareto-optimal trade-offs (users vs. power):');
+        disp(paretoTable);
+    else
+        warning('Pareto front is empty. Check GA settings or SINR configuration.');
+    end
+end
 
 % % ---- RL knobs / action sets ----
 % params.defaultSigmaScales = [0.2, 0.2, 0.2, 0.2];   % X, Y, Z, Power
@@ -266,5 +312,3 @@ params = struct(...
 
 % [bestInd, bestFit, history] = OptimizeBaseStationRl( ...
 %     fbsAntenna, containsMbs, antennaObjectMbs, mbs_params, params);
-
-
