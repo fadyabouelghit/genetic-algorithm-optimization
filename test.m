@@ -19,42 +19,47 @@
     % BS2 Power (W)       9.9492
     % BS2 Power Status         1
 
-no_fbs = 1;
-tx_x = 198.73;
-tx_y = 192.09;
-tx_height = 21.899;
-tx_power = 9.1958;   
-power_status = 1;
+% no_fbs = 1;
+% tx_x = 318.793396;
+% tx_y = 0;
+% tx_height = 38.86;
+% tx_power = 7;   
+% power_status = 0;
 
-% no_fbs = 2;
-% tx_x = [72.579 77.406];
-% tx_y = [356.31 283.79];
-% tx_height = [56.741 24.139];
-% tx_power = [9.62 9.949];   
-% power_status = [1 1];
+no_fbs = 2;
+tx_x = [72.579 77.406];
+tx_y = [356.31 283.79];
+tx_height = [56.741 24.139];
+tx_power = [9.62 9.949];   
+power_status = [1 1];
 
 
 fbsAntenna = setup_antenna();
 mbsAntenna = setup_antenna();
 
-numMbs = 1;
+
+numMbs = 2;
 containsMbs = 1;
-W = 2000; H = 1500;      
+W = 4000; H = 3000;  
 margin = 100;            
 ISD = 500;               
 [xs, ys] = generate_hex_sites(W, H, ISD, margin, numMbs);
 mbs_height   = 25;
 mbs_power    = 20;
+
+xs = [1000,3500];
+ys = [1000,2200];
+
 [mbs_params, antennaObjectMbs, containsMbs, numMbs] = pack_mbs_params...
     (xs, ys, mbs_height, mbs_power, mbsAntenna);
+
+subset = struct('xmin', 0, 'xmax', W, ...
+                'ymin', 0, 'ymax', H);
 
 tempForX = mbs_params(1,:);
 mbs_params(1,:) = mbs_params(2,:);
 mbs_params(2,:) = tempForX;
-% xs 
-% ys
-% mbs_params(1,:) = [750, 750];
-% mbs_params(2,:) = [750, 1500];
+
 cache = precompute_mbs_power_maps( ...
     mbs_params, ...
     antennaObjectMbs, ...
@@ -64,11 +69,6 @@ cache = precompute_mbs_power_maps( ...
     1.5, ...                      % UE height
     './cache_mbs_maps' ...        % folder for on-disk cache
 );
-% mbs_x = [300];       
-% mbs_y = [350];     
-% mbs_height = [25];        
-% mbs_power = [20];
-% mbs_params = [mbs_x; mbs_y; mbs_height; mbs_power]; 
 
 
 num_users = 1000;
