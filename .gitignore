@@ -4,6 +4,7 @@ venv/
 .venv/
 *.asv
 *.pyc
+*.csv
 
 cache_mbs_maps/
 ppo_logs/

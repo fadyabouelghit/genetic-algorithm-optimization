@@ -62,6 +62,8 @@ history = struct(...
     'stdFitness', zeros(params.numGenerations, 1), ...
     'minFitness', zeros(params.numGenerations,1), ...
     'maxFitness', zeros(params.numGenerations,1), ...
+    'bestConnectedUsers', zeros(params.numGenerations, 1), ...
+    'avgConnectedUsers', zeros(params.numGenerations, 1), ...
     'bestIndividuals', zeros(params.numGenerations, size(params.bounds, 1)), ...
     'crossovers', zeros(params.numGenerations, 1), ...
     'mutations', zeros(params.numGenerations, 1), ...
@@ -177,6 +179,8 @@ for gen = 1:params.numGenerations
     [bestFitness, bestIdx] = max(fitness);
     bestIndividual = population(bestIdx, :);
     history.bestIndividuals(gen, :) = bestIndividual;
+    history.bestConnectedUsers(gen) = evalDetails.numUsers(bestIdx);
+    history.avgConnectedUsers(gen) = mean(evalDetails.numUsers);
     
     if bestFitness > globalBestFitness
         globalBestFitness = bestFitness;
@@ -462,6 +466,17 @@ if params.verbose > 0
     xlabel('Generation');
     title('Progression of Height and Power over Generations');
     legend('Location', 'bestoutside');
+    grid on;
+
+    % connected users per generation
+    figure('Name', 'Connected Users per Generation', 'Position', [100 100 800 500]);
+    plot(gens, history.bestConnectedUsers(1:gen), 'b-o', 'DisplayName', 'Best Connected Users');
+    hold on;
+    plot(gens, history.avgConnectedUsers(1:gen), 'r--', 'LineWidth', 1.5, 'DisplayName', 'Avg Connected Users');
+    xlabel('Generation');
+    ylabel('Connected Users');
+    title('Connected Users Progression');
+    legend('Location', 'best');
     grid on;
 
     end
