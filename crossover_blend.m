@@ -2,7 +2,8 @@ function [child1, child2, crossoverFlag] = crossover_blend(parent1, parent2, pro
     
     crossoverFlag = 0;
     alpha = 0.5;
-    n_fbs = length(parent1) / 5;  % Each BS has 5 parameters
+    hasFreqFlag = mod(length(parent1), 5) == 1;
+    n_fbs = floor(length(parent1) / 5);  % Each BS has 5 parameters
 
     if rand() < prob
         crossoverFlag = 1;
@@ -31,9 +32,22 @@ function [child1, child2, crossoverFlag] = crossover_blend(parent1, parent2, pro
 
         end
 
-        % Clamp continuous parameters to bounds
-        child1(1:end-1) = clampToBounds(child1(1:end-1), bounds(1:end-1,:));
-        child2(1:end-1) = clampToBounds(child2(1:end-1), bounds(1:end-1,:));
+        for bs = 1:n_fbs
+            idx = (bs-1)*5 + 1 : (bs-1)*5 + 4;
+            child1(idx) = clampToBounds(child1(idx), bounds(idx,:));
+            child2(idx) = clampToBounds(child2(idx), bounds(idx,:));
+        end
+
+        if hasFreqFlag
+            freq_idx = 5*n_fbs + 1;
+            if parent1(freq_idx) == parent2(freq_idx)
+                child1(freq_idx) = parent1(freq_idx);
+                child2(freq_idx) = parent1(freq_idx);
+            else
+                child1(freq_idx) = randi([0, 1]);
+                child2(freq_idx) = 1 - child1(freq_idx);
+            end
+        end
     else
         child1 = parent1;
         child2 = parent2;

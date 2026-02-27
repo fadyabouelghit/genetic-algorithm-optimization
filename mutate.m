@@ -1,6 +1,7 @@
 function [mutated, mutationFlags] = mutate(individual, prob, bounds, mutationScale, gen, params, adaptiveParams)
     
-    n_fbs = length(individual)/5;
+    hasFreqFlag = mod(length(individual), 5) == 1;
+    n_fbs = floor(length(individual)/5);
     mutationFlags = false(size(individual));
     
     for bs = 1:n_fbs
@@ -47,6 +48,12 @@ function [mutated, mutationFlags] = mutate(individual, prob, bounds, mutationSca
             mutationFlags(idx) = true;
         end
 
+    end
+
+    if hasFreqFlag && rand() < prob
+        freq_idx = 5 * n_fbs + 1;
+        individual(freq_idx) = 1 - individual(freq_idx);
+        mutationFlags(freq_idx) = true;
     end
 
     mutated = individual;

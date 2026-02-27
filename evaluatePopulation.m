@@ -42,10 +42,24 @@ function [fitness, details] = evaluatePopulation(l, population, verbose, n_fbs, 
 
     for i = 1:size(population,1)
         ind = population(i,:);
-        x = ind(1:5:end); y = ind(2:5:end); z = ind(3:5:end);
-        power = ind(4:5:end); power_status = ind(5:5:end);
+        coreLen = 5 * n_fbs;
+        indCore = ind(1:coreLen);
+        x = indCore(1:5:end); y = indCore(2:5:end); z = indCore(3:5:end);
+        power = indCore(4:5:end); power_status = indCore(5:5:end);
 
-        [~, ~, numUsers, transmittedPower, avg_rate_connected_bpsHz, fbsUsers, mbsUsers] = SINREvaluation(l, power_status, ...
+        if numel(ind) > coreLen
+            fbsFreqFlag = double(ind(coreLen + 1) >= 0.5);
+        else
+            fbsFreqFlag = 1;
+        end
+
+        if fbsFreqFlag == 0
+            fbsAntennaEval = l(1); % coverage
+        else
+            fbsAntennaEval = l(min(2, numel(l))); % capacity
+        end
+
+        [~, ~, numUsers, transmittedPower, avg_rate_connected_bpsHz, fbsUsers, mbsUsers] = SINREvaluation(fbsAntennaEval, power_status, ...
             x, y, z, n_fbs, power, ...
             mbs_y, mbs_x, mbs_height, mbs_power, ...
             0, spaceLimit(1), 0, spaceLimit(2), maxUsers, sinrThreshold, containsMbs, antennaObjectMbs, mbsCache);
