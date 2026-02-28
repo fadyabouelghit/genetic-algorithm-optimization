@@ -2,7 +2,7 @@ function [user_positions, df_users_table, total_connected_users, total_transmitt
 % SINREVALUATION Computes the SINR values for users based on FBS and optional MBS parameters.
 %
 %   INPUTS:
-%     antenna_object     : FBS antenna object (Quadriga-compatible)
+%     antenna_object     : FBS antenna object(s), scalar or 1×no_fbs array
 %     power_status       : Activation vector for each FBS (1 = active, 0 = inactive)
 %     tx_x, tx_y         : X and Y coordinates of each FBS
 %     tx_height          : Heights of each FBS
@@ -144,7 +144,12 @@ function [df_users, df_users_table, avg_rate_connected_bpsHz] = calculate_power_
     % FBS loop
     for fbs_id = 1:no_fbs
         if power_status(fbs_id)
-            [P,x_coords,y_coords] = calculate_power(antenna_object, tx_x(fbs_id), tx_y(fbs_id), tx_height(fbs_id), ...
+            if numel(antenna_object) >= fbs_id
+                antThis = antenna_object(fbs_id);
+            else
+                antThis = antenna_object(1);
+            end
+            [P,x_coords,y_coords] = calculate_power(antThis, tx_x(fbs_id), tx_y(fbs_id), tx_height(fbs_id), ...
                                 tx_power(fbs_id), subset_x_min, subset_x_max, subset_y_min, subset_y_max);
         else
             P = zeros(subset_x_max + 1, subset_y_max + 1);

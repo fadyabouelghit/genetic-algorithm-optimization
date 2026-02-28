@@ -83,18 +83,17 @@ if params.verbose > 0
 end
 
 filename = 'population_evolution.xlsx';
-function headers = create_headers(n_fbs, hasFreqFlag)
-    headers = cell(1, n_fbs*5 + 1 + hasFreqFlag);
+function headers = create_headers(n_fbs)
+    headers = cell(1, n_fbs*6 + 1);
     headers{1} = 'Generation';
     for bs = 1:n_fbs
-        headers{(bs-1)*5+2} = sprintf('BS%d_X', bs);
-        headers{(bs-1)*5+3} = sprintf('BS%d_Y', bs);
-        headers{(bs-1)*5+4} = sprintf('BS%d_Z', bs);
-        headers{(bs-1)*5+5} = sprintf('BS%d_Power', bs);
-        headers{(bs-1)*5+6} = sprintf('BS%d_Power_status', bs);
-    end
-    if hasFreqFlag
-        headers{end} = 'fbsFreqFlag';
+        base = (bs-1)*6;
+        headers{base+2} = sprintf('BS%d_X', bs);
+        headers{base+3} = sprintf('BS%d_Y', bs);
+        headers{base+4} = sprintf('BS%d_Z', bs);
+        headers{base+5} = sprintf('BS%d_Power', bs);
+        headers{base+6} = sprintf('BS%d_Power_status', bs);
+        headers{base+7} = sprintf('BS%d_fbsFreqFlag', bs);
     end
 end
 
@@ -139,7 +138,7 @@ if trajectoryPlot.enabled
     caxis(trajectoryPlot.ax, [1 params.numGenerations]);
 end
 
-headers = create_headers(params.numBS, size(population,2) > 5*params.numBS);
+headers = create_headers(params.numBS);
 initialData = [zeros(params.populationSize,1) population]; % Gen 0
 % writetable(array2table(initialData, 'VariableNames', headers), filename, 'WriteMode', 'overwrite');
 
@@ -201,15 +200,8 @@ for gen = 1:params.numGenerations
         fprintf('Fitness: Best=%.3f, Avg=%.2f, Std=%.2f\n', ...
             history.bestFitness(gen), history.avgFitness(gen), history.stdFitness(gen));
 
-        coreLenGen = 5 * params.numBS;
-        if numel(bestIndividual) > coreLenGen && bestIndividual(coreLenGen + 1) < 0.5
-            fbsBandLabel = 'Coverage Band';
-        else
-            fbsBandLabel = 'Capacity Band';
-        end
-            
         for fb = 1:params.numBS
-            startIdx = (fb-1)*5 + 1;
+            startIdx = (fb-1)*6 + 1;
             
             coords = bestIndividual(startIdx : startIdx+2);
             coordCells = cellstr(num2str(coords', '%g'));
@@ -217,6 +209,12 @@ for gen = 1:params.numGenerations
 
             powerVal = bestIndividual(startIdx+3);            
             binaryVal = bestIndividual(startIdx+4);
+            fbsFreqFlag = double(bestIndividual(startIdx+5) >= 0.5);
+            if fbsFreqFlag == 0
+                fbsBandLabel = 'Coverage Band';
+            else
+                fbsBandLabel = 'Capacity Band';
+            end
 
             fprintf('Best Individual (FBS %d): [%s] Power: %.1f, Power Status: %d, Band: %s\n', ...
                     fb, coordStr, powerVal, binaryVal, fbsBandLabel);
@@ -281,25 +279,19 @@ end
 history.time.total = toc(totalTimer);
 bestFitness = globalBestFitness;
 bestIndividual = globalBestIndividual;
-coreLen = 5 * params.numBS;
-bestCore = bestIndividual(1:coreLen);
-hasFreqFlag = numel(bestIndividual) > coreLen;
-if hasFreqFlag
-    fbsFreqFlag = double(bestIndividual(coreLen + 1) >= 0.5);
-else
-    fbsFreqFlag = 1;
-end
-if fbsFreqFlag == 0
-    fbsAntennaEval = l(1);
-else
-    fbsAntennaEval = l(min(2, numel(l)));
+blockSize = 6;
+bestCore = bestIndividual;
+fbsFreqFlags = double(bestCore(6:blockSize:end) >= 0.5);
+fbsAntennaEval = repmat(l(1), 1, params.numBS);
+if numel(l) >= 2
+    fbsAntennaEval(fbsFreqFlags >= 0.5) = l(2);
 end
 numMbs = containsMbs * size(mbs_params, 2);
-bsBandIds = [repmat(fbsFreqFlag, 1, params.numBS), repmat(params.mbsBandId, 1, numMbs)];
+bsBandIds = [fbsFreqFlags, repmat(params.mbsBandId, 1, numMbs)];
 
     [~, ~, numUsers, transmittedPower, avg_rate_connected_bpsHz, fbsUsers, mbsUsers] = SINREvaluation( ...
-        fbsAntennaEval, bestCore(5:5:end), bestCore(1:5:end), bestCore(2:5:end), bestCore(3:5:end), params.numBS, ...
-        bestCore(4:5:end), mbs_y, mbs_x, mbs_height, mbs_power, ...
+        fbsAntennaEval, bestCore(5:blockSize:end), bestCore(1:blockSize:end), bestCore(2:blockSize:end), bestCore(3:blockSize:end), params.numBS, ...
+        bestCore(4:blockSize:end), mbs_y, mbs_x, mbs_height, mbs_power, ...
         0, params.spaceLimit(1), 0, params.spaceLimit(2), params.maxUsers, params.sinrThreshold, containsMbs, antennaObjectMbs, params.mbsCache, bsBandIds);
 
 if params.verbose > 0
@@ -319,16 +311,15 @@ if params.verbose > 0
     
     % Create parameter table for multiple BS
     numBS = params.numBS;
-    paramNames = cell(5*numBS + hasFreqFlag, 1);
+    paramNames = cell(6*numBS, 1);
     for bs = 1:numBS
-        paramNames{(bs-1)*5 + 1} = sprintf('BS%d X (m)', bs);
-        paramNames{(bs-1)*5 + 2} = sprintf('BS%d Y (m)', bs);
-        paramNames{(bs-1)*5 + 3} = sprintf('BS%d Z (m)', bs);
-        paramNames{(bs-1)*5 + 4} = sprintf('BS%d Power (W)', bs);
-        paramNames{(bs-1)*5 + 5} = sprintf('BS%d Power Status', bs);
-    end
-    if hasFreqFlag
-        paramNames{5*numBS + 1} = 'fbsFreqFlag';
+        base = (bs-1)*6;
+        paramNames{base + 1} = sprintf('BS%d X (m)', bs);
+        paramNames{base + 2} = sprintf('BS%d Y (m)', bs);
+        paramNames{base + 3} = sprintf('BS%d Z (m)', bs);
+        paramNames{base + 4} = sprintf('BS%d Power (W)', bs);
+        paramNames{base + 5} = sprintf('BS%d Power Status', bs);
+        paramNames{base + 6} = sprintf('BS%d fbsFreqFlag', bs);
     end
     
     disp(array2table(bestIndividual', ...
@@ -381,7 +372,7 @@ if params.verbose > 0
     hold on;
     colors = lines(numBS);
     for bs = 1:numBS
-        colBase = (bs-1)*5;
+        colBase = (bs-1)*6;
         x = history.bestIndividuals(1:gen, colBase + 1);
         y = history.bestIndividuals(1:gen, colBase + 2);
         plot(x, y, 'o-', 'Color', colors(bs,:), 'DisplayName', sprintf('BS%d', bs));
@@ -397,7 +388,7 @@ if params.verbose > 0
     subplot(2,2,4);
     altitudeData = zeros(gen, numBS);
     for bs = 1:numBS
-        colBase = (bs-1)*5;
+        colBase = (bs-1)*6;
         altitudeData(:, bs) = history.bestIndividuals(1:gen, colBase + 3);
     end
     boxplot(altitudeData, ...
@@ -408,7 +399,7 @@ if params.verbose > 0
 
     
     % trajectory plot 
-    step = 5; 
+    step = 6; 
     num_pairs = params.numBS;
     
     figure; 
@@ -470,8 +461,8 @@ if params.verbose > 0
 
     % power vs height plot
     figure;
-    heights = history.bestIndividuals(1:gen, 3:5:end);
-    powers  = history.bestIndividuals(1:gen, 4:5:end);
+    heights = history.bestIndividuals(1:gen, 3:6:end);
+    powers  = history.bestIndividuals(1:gen, 4:6:end);
     generations = 1:gen;
     
     colors = lines(numBS);
@@ -575,7 +566,7 @@ end
 function finalXYZStr = formatFinalLocations(individual, numBS)
     triplets = strings(numBS, 1);
     for bs = 1:numBS
-        idx = (bs-1)*5 + 1;
+        idx = (bs-1)*6 + 1;
         coords = individual(idx:idx+2);
         triplets(bs) = sprintf('[%g,%g,%g]', coords);
     end
@@ -585,7 +576,7 @@ end
 function statusStr = formatPowerStatuses(individual, numBS)
     statuses = strings(numBS, 1);
     for bs = 1:numBS
-        idx = (bs-1)*5 + 5;
+        idx = (bs-1)*6 + 5;
         statuses(bs) = string(individual(idx));
     end
     statusStr = strjoin(statuses, '; ');
@@ -594,7 +585,7 @@ end
 function powersStr = formatFbsPowers(individual, numBS)
     powers = strings(numBS, 1);
     for bs = 1:numBS
-        idx = (bs-1)*5 + 4;
+        idx = (bs-1)*6 + 4;
         powers(bs) = sprintf('%g', individual(idx));
     end
     powersStr = strjoin(powers, '; ');

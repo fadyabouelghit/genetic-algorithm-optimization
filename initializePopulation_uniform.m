@@ -3,8 +3,11 @@ function population = initializePopulation_uniform(popSize, bounds, n_fbs)
 rng(43);
 numParams = size(bounds,1);
 population = zeros(popSize, numParams);
-numFbsParams = 5 * n_fbs;
-hasFreqFlag = (numParams == numFbsParams + 1);
+blockSize = 6;
+expectedParams = blockSize * n_fbs;
+if numParams ~= expectedParams
+    error('initializePopulation_uniform expects %d params (6 per FBS), got %d.', expectedParams, numParams);
+end
 
 for i = 1:numParams
     
@@ -22,10 +25,8 @@ for i = 1:numParams
     lb = bounds(i,1);
     ub = bounds(i,2);
 
-    if hasFreqFlag && i == numFbsParams + 1
-        % Global binary frequency selector gene: fbsFreqFlag
-        population(:,i) = randi([0 1], popSize, 1);
-    elseif i <= numFbsParams && mod(i,5) == 0  % 5th parameter in each FBS block is power_status
+    posInBlock = mod(i-1, blockSize) + 1;
+    if posInBlock == 5 || posInBlock == 6
         % Binary sampling: 0 or 1
         population(:,i) = randi([0 1], popSize, 1);
     else
