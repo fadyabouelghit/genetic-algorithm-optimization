@@ -30,6 +30,9 @@ function [paretoFront, history] = optimizeBaseStationMoga(l, containsMbs, antenn
     evalParams = params.fitnessWeights;
     evalParams.maxUsers = params.maxUsers;
     evalParams.sinrThreshold = params.sinrThreshold;
+    if isfield(params, 'mbsBandId')
+        evalParams.mbsBandId = params.mbsBandId;
+    end
 
     [~, details] = evaluatePopulation(l, population, params.verbose, params.numBS, ...
         params.spaceLimit, containsMbs, mbs_params, antennaObjectMbs, params.bounds, params.mbsCache, targetIdx, evalParams);
@@ -59,6 +62,9 @@ function [paretoFront, history] = optimizeBaseStationMoga(l, containsMbs, antenn
         evalParams = params.fitnessWeights;
         evalParams.maxUsers = params.maxUsers;
         evalParams.sinrThreshold = params.sinrThreshold;
+        if isfield(params, 'mbsBandId')
+            evalParams.mbsBandId = params.mbsBandId;
+        end
         [~, offspringDetails] = evaluatePopulation(l, offspring, params.verbose, params.numBS, ...
             params.spaceLimit, containsMbs, mbs_params, antennaObjectMbs, params.bounds, params.mbsCache, targetIdx, evalParams);
         offspringObjectives = buildObjectives(offspringDetails);

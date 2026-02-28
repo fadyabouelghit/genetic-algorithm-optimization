@@ -22,6 +22,7 @@ function [bestIndividual, bestFitness, history] = optimizeBaseStation(l, contain
     defaultParams.plotTrajectory = false;
     defaultParams.maxUsers = 1000;
     defaultParams.sinrThreshold = 5;
+    defaultParams.mbsBandId = 0;
     defaultParams.enableLogging = true;
     defaultParams.enablePerformancePlotting = false;
     defaultParams.logFile = '';
@@ -103,6 +104,7 @@ population = initializePopulation_uniform(params.initialPopulationSize, params.b
 evalParams = params.fitnessWeights;
 evalParams.maxUsers = params.maxUsers;
 evalParams.sinrThreshold = params.sinrThreshold;
+evalParams.mbsBandId = params.mbsBandId;
 
 if params.initialPopulationSize > params.populationSize
     [initialFitness, ~] = evaluatePopulation(l, population, params.verbose, params.numBS, ...
@@ -166,6 +168,7 @@ for gen = 1:params.numGenerations
     evalParams = params.fitnessWeights;
     evalParams.maxUsers = params.maxUsers;
     evalParams.sinrThreshold = params.sinrThreshold;
+    evalParams.mbsBandId = params.mbsBandId;
     [fitness, evalDetails] = evaluatePopulation(l, population, params.verbose, params.numBS, params.spaceLimit ,containsMbs, mbs_params, antennaObjectMbs, params.bounds, params.mbsCache, targetIdx, evalParams);
     
     if trajectoryPlot.enabled
@@ -291,11 +294,13 @@ if fbsFreqFlag == 0
 else
     fbsAntennaEval = l(min(2, numel(l)));
 end
+numMbs = containsMbs * size(mbs_params, 2);
+bsBandIds = [repmat(fbsFreqFlag, 1, params.numBS), repmat(params.mbsBandId, 1, numMbs)];
 
     [~, ~, numUsers, transmittedPower, avg_rate_connected_bpsHz, fbsUsers, mbsUsers] = SINREvaluation( ...
         fbsAntennaEval, bestCore(5:5:end), bestCore(1:5:end), bestCore(2:5:end), bestCore(3:5:end), params.numBS, ...
         bestCore(4:5:end), mbs_y, mbs_x, mbs_height, mbs_power, ...
-        0, params.spaceLimit(1), 0, params.spaceLimit(2), params.maxUsers, params.sinrThreshold, containsMbs, antennaObjectMbs, params.mbsCache);
+        0, params.spaceLimit(1), 0, params.spaceLimit(2), params.maxUsers, params.sinrThreshold, containsMbs, antennaObjectMbs, params.mbsCache, bsBandIds);
 
 if params.verbose > 0
     fprintf('\n=== Optimization Complete ===\n');

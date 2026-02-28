@@ -15,6 +15,7 @@ function [fitness, details] = evaluatePopulation(l, population, verbose, n_fbs, 
     if ~isfield(weightParams, 'fbsExponent'), weightParams.fbsExponent = 1; end
     if ~isfield(weightParams, 'maxUsers'), weightParams.maxUsers = 1000; end
     if ~isfield(weightParams, 'sinrThreshold'), weightParams.sinrThreshold = 5; end
+    if ~isfield(weightParams, 'mbsBandId'), weightParams.mbsBandId = 1; end
     beta = weightParams.beta;
     gamma = weightParams.gamma;
     epsilon = weightParams.epsilon;
@@ -22,6 +23,7 @@ function [fitness, details] = evaluatePopulation(l, population, verbose, n_fbs, 
     fbsExponent = weightParams.fbsExponent;
     maxUsers = weightParams.maxUsers;
     sinrThreshold = weightParams.sinrThreshold;
+    mbsBandId = weightParams.mbsBandId;
 
     fitness = zeros(size(population,1), 1);
     numIndividuals = size(population,1);
@@ -59,10 +61,13 @@ function [fitness, details] = evaluatePopulation(l, population, verbose, n_fbs, 
             fbsAntennaEval = l(min(2, numel(l))); % capacity
         end
 
+        numMbs = containsMbs * size(mbs_params, 2);
+        bsBandIds = [repmat(fbsFreqFlag, 1, n_fbs), repmat(mbsBandId, 1, numMbs)];
+
         [~, ~, numUsers, transmittedPower, avg_rate_connected_bpsHz, fbsUsers, mbsUsers] = SINREvaluation(fbsAntennaEval, power_status, ...
             x, y, z, n_fbs, power, ...
             mbs_y, mbs_x, mbs_height, mbs_power, ...
-            0, spaceLimit(1), 0, spaceLimit(2), maxUsers, sinrThreshold, containsMbs, antennaObjectMbs, mbsCache);
+            0, spaceLimit(1), 0, spaceLimit(2), maxUsers, sinrThreshold, containsMbs, antennaObjectMbs, mbsCache, bsBandIds);
 
         details.numUsers(i) = numUsers;
         details.transmittedPower(i) = transmittedPower;

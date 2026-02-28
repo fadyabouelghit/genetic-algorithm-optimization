@@ -1,4 +1,4 @@
-function [user_positions, df_users_table, total_connected_users, total_transmitted_pwr, avg_rate_connected_bpsHz, fbs_connected_users, mbs_connected_users] = SINREvaluation(antenna_object, power_status, tx_x, tx_y, tx_height, no_fbs, tx_power, mbs_x, mbs_y, mbs_height, mbs_power, subset_x_min, subset_x_max, subset_y_min, subset_y_max, num_users, threshold, containsMbs, antennaObjectMbs, mbsCache)
+function [user_positions, df_users_table, total_connected_users, total_transmitted_pwr, avg_rate_connected_bpsHz, fbs_connected_users, mbs_connected_users] = SINREvaluation(antenna_object, power_status, tx_x, tx_y, tx_height, no_fbs, tx_power, mbs_x, mbs_y, mbs_height, mbs_power, subset_x_min, subset_x_max, subset_y_min, subset_y_max, num_users, threshold, containsMbs, antennaObjectMbs, mbsCache, bsBandIds)
 % SINREVALUATION Computes the SINR values for users based on FBS and optional MBS parameters.
 %
 %   INPUTS:
@@ -18,6 +18,8 @@ function [user_positions, df_users_table, total_connected_users, total_transmitt
 %     containsMbs        : Binary flag indicating MBS presence
 %     antennaObjectMbs   : Array of MBS antenna objects
 %     mbsCache           : Power map cache (struct array or cell array of structs)
+%     bsBandIds          : Optional 1×(no_fbs+num_mbs) band ids. Interference
+%                          is only accumulated from same-band BSs.
 %
 %   OUTPUTS:
 %     user_positions         : Matrix of user coordinates
@@ -33,11 +35,25 @@ function [user_positions, df_users_table, total_connected_users, total_transmitt
         end
     end
 
+    num_fbs_scalar = round(double(no_fbs));
+    num_mbs_scalar = 0;
+    if containsMbs
+        num_mbs_scalar = numel(antennaObjectMbs);
+    end
+    total_bs = num_fbs_scalar + num_mbs_scalar;
+    if nargin < 21 || isempty(bsBandIds)
+        bsBandIds = ones(1, total_bs);
+    else
+        bsBandIds = reshape(double(bsBandIds), 1, []);
+    end
+    assert(numel(bsBandIds) == total_bs, ...
+        'bsBandIds must have %d entries (no_fbs + num_mbs).', total_bs);
+
     user_positions = generate_user_positions(subset_x_min, subset_x_max, subset_y_min, subset_y_max, num_users);
 
     [~, df_users_table, avg_rate_connected_bpsHz] = calculate_power_iterator(antenna_object, no_fbs, power_status, tx_y, tx_x, tx_height, tx_power, ...
         mbs_x, mbs_y, mbs_height, mbs_power, user_positions, ...
-        subset_x_min, subset_x_max, subset_y_min, subset_y_max, threshold, containsMbs, antennaObjectMbs, mbsCache);
+        subset_x_min, subset_x_max, subset_y_min, subset_y_max, threshold, containsMbs, antennaObjectMbs, mbsCache, bsBandIds);
 
     total_connected_users = sum(df_users_table.is_connected);
     fbs_connected_users = sum(df_users_table.is_connected & df_users_table.FBS_connection_index >= 1 & df_users_table.FBS_connection_index <= no_fbs);
@@ -114,7 +130,7 @@ end
 function [df_users, df_users_table, avg_rate_connected_bpsHz] = calculate_power_iterator(antenna_object, no_fbs, power_status, tx_y, tx_x, tx_height, tx_power, ...
     mbs_x, mbs_y, mbs_height, mbs_power, user_positions, ...
     subset_x_min, subset_x_max, subset_y_min, subset_y_max, ... 
-    threshold, containsMbs, antennaObjectMbs, mbsCache)
+    threshold, containsMbs, antennaObjectMbs, mbsCache, bsBandIds)
 % CALCULATE_POWER_ITERATOR Evaluates SINR at each user for all BSs.
 %
 %   OUTPUTS:
@@ -168,12 +184,15 @@ function [df_users, df_users_table, avg_rate_connected_bpsHz] = calculate_power_
     max_fbs_index = zeros(num_users, 1);
 
     bsIterator = size(df_users, 2);
+    assert(numel(bsBandIds) == bsIterator, ...
+        'bsBandIds (%d) must match number of BS power columns (%d).', numel(bsBandIds), bsIterator);
 
     for bs_id = 1:bsIterator
         sinr_column = zeros(num_users, 1);
+        sameBandMask = (bsBandIds == bsBandIds(bs_id));
         parfor user_id = 1:num_users
             signal = df_users(user_id, bs_id);
-            interference = sum(df_users(user_id, :)) - signal;
+            interference = sum(df_users(user_id, sameBandMask)) - signal;
             sinr = signal / (interference + noise_power);
             sinr_db = 10 * log10(sinr);
             sinr_column(user_id) = sinr_db;
