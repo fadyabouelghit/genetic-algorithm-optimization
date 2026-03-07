@@ -1,12 +1,17 @@
 function [mutated, mutationFlags] = mutate(individual, prob, bounds, mutationScale, gen, params, adaptiveParams)
     
-    n_fbs = length(individual)/5;
+    blockSize = 6;
+    if mod(length(individual), blockSize) ~= 0
+        error('mutate expects chromosome size to be a multiple of 6.');
+    end
+    n_fbs = floor(length(individual)/blockSize);
     mutationFlags = false(size(individual));
     
     for bs = 1:n_fbs
         if rand() < prob
-            idx = (1:5) + (bs-1)*5;
-            bin_idx = bs * 5;
+            idx = (1:blockSize) + (bs-1)*blockSize;
+            status_idx = (bs-1)*blockSize + 5;
+            freq_idx = (bs-1)*blockSize + 6;
             
             paramRanges = bounds(idx,2) - bounds(idx,1);
             
@@ -38,11 +43,13 @@ function [mutated, mutationFlags] = mutate(individual, prob, bounds, mutationSca
 
 
 
-            mutatedBS = individual(idx(1:end-1)) + perturbation';
-            mutatedBS = reflectToBounds(mutatedBS, bounds(idx(1:end-1),:));
+            cont_idx = idx(1:4);
+            mutatedBS = individual(cont_idx) + perturbation';
+            mutatedBS = reflectToBounds(mutatedBS, bounds(cont_idx,:));
             
-            individual(idx(1:end-1)) = mutatedBS; % continuous variable mutations 
-            individual(bin_idx) = 1 - individual(bin_idx); % binary variable mutations/flipping 
+            individual(cont_idx) = mutatedBS; % continuous variable mutations 
+            individual(status_idx) = 1 - individual(status_idx); % power_status flip
+            individual(freq_idx) = 1 - individual(freq_idx); % fbsFreqFlag flip
 
             mutationFlags(idx) = true;
         end

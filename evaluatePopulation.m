@@ -15,6 +15,7 @@ function [fitness, details] = evaluatePopulation(l, population, verbose, n_fbs, 
     if ~isfield(weightParams, 'fbsExponent'), weightParams.fbsExponent = 1; end
     if ~isfield(weightParams, 'maxUsers'), weightParams.maxUsers = 1000; end
     if ~isfield(weightParams, 'sinrThreshold'), weightParams.sinrThreshold = 5; end
+    if ~isfield(weightParams, 'mbsBandId'), weightParams.mbsBandId = 0; end
     beta = weightParams.beta;
     gamma = weightParams.gamma;
     epsilon = weightParams.epsilon;
@@ -22,6 +23,7 @@ function [fitness, details] = evaluatePopulation(l, population, verbose, n_fbs, 
     fbsExponent = weightParams.fbsExponent;
     maxUsers = weightParams.maxUsers;
     sinrThreshold = weightParams.sinrThreshold;
+    mbsBandId = weightParams.mbsBandId;
 
     fitness = zeros(size(population,1), 1);
     numIndividuals = size(population,1);
@@ -33,22 +35,39 @@ function [fitness, details] = evaluatePopulation(l, population, verbose, n_fbs, 
         'mbsUsers', zeros(numIndividuals, 1), ...
         'activeFbs', zeros(numIndividuals, 1));
 
-    powerBounds = bounds(4:5:end, :);
+    powerBounds = bounds(4:6:end, :);
     maxPower = sum(powerBounds(:,2));
     minPower = 0;
 
     mbs_x = mbs_params(1,:); mbs_y = mbs_params(2,:);
     mbs_height = mbs_params(3,:); mbs_power = mbs_params(4,:);
+    blockSize = 6;
 
     for i = 1:size(population,1)
         ind = population(i,:);
-        x = ind(1:5:end); y = ind(2:5:end); z = ind(3:5:end);
-        power = ind(4:5:end); power_status = ind(5:5:end);
+        if numel(ind) ~= blockSize * n_fbs
+            error('evaluatePopulation expects %d decision vars (6 per FBS), got %d.', blockSize*n_fbs, numel(ind));
+        end
+        x = ind(1:blockSize:end);
+        y = ind(2:blockSize:end);
+        z = ind(3:blockSize:end);
+        power = ind(4:blockSize:end);
+        power_status = ind(5:blockSize:end);
+        fbsFreqFlags = double(ind(6:blockSize:end) >= 0.5);
 
-        [~, ~, numUsers, transmittedPower, avg_rate_connected_bpsHz, fbsUsers, mbsUsers] = SINREvaluation(l, power_status, ...
+        fbsAntennaEval = repmat(l(1), 1, n_fbs);
+        if numel(l) >= 2
+            capMask = (fbsFreqFlags >= 0.5);
+            fbsAntennaEval(capMask) = l(2);
+        end
+
+        numMbs = containsMbs * size(mbs_params, 2);
+        bsBandIds = [fbsFreqFlags, repmat(mbsBandId, 1, numMbs)];
+
+        [~, ~, numUsers, transmittedPower, avg_rate_connected_bpsHz, fbsUsers, mbsUsers] = SINREvaluation(fbsAntennaEval, power_status, ...
             x, y, z, n_fbs, power, ...
             mbs_y, mbs_x, mbs_height, mbs_power, ...
-            0, spaceLimit(1), 0, spaceLimit(2), maxUsers, sinrThreshold, containsMbs, antennaObjectMbs, mbsCache);
+            0, spaceLimit(1), 0, spaceLimit(2), maxUsers, sinrThreshold, containsMbs, antennaObjectMbs, mbsCache, bsBandIds);
 
         details.numUsers(i) = numUsers;
         details.transmittedPower(i) = transmittedPower;

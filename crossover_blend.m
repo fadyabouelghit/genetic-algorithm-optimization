@@ -2,7 +2,11 @@ function [child1, child2, crossoverFlag] = crossover_blend(parent1, parent2, pro
     
     crossoverFlag = 0;
     alpha = 0.5;
-    n_fbs = length(parent1) / 5;  % Each BS has 5 parameters
+    blockSize = 6;
+    if mod(length(parent1), blockSize) ~= 0
+        error('crossover_blend expects chromosome size to be a multiple of 6.');
+    end
+    n_fbs = floor(length(parent1) / blockSize);  % Each BS has 6 parameters
 
     if rand() < prob
         crossoverFlag = 1;
@@ -12,28 +16,38 @@ function [child1, child2, crossoverFlag] = crossover_blend(parent1, parent2, pro
         % Loop through each base station block
         for bs = 1:n_fbs
             % Continuous parameters (X, Y, Z, Power)
-            idx = (bs-1)*5 + 1 : (bs-1)*5 + 4;
-            % Binary parameter (Power Status)
-            bin_idx = (bs-1)*5 + 5;
+            idx = (bs-1)*blockSize + 1 : (bs-1)*blockSize + 4;
+            % Binary parameters
+            status_idx = (bs-1)*blockSize + 5;
+            freq_idx = (bs-1)*blockSize + 6;
 
             % Blend crossover for continuous parameters
             gamma = (1 + 2*alpha) * rand(1,4) - alpha;
             child1(idx) = (1 - gamma) .* parent1(idx) + gamma .* parent2(idx);
             child2(idx) = gamma .* parent1(idx) + (1 - gamma) .* parent2(idx);
             
-            if parent1(bin_idx) == parent2(bin_idx) % XOR crossover with random replacement
-                child1(bin_idx) = parent1(bin_idx);
-                child2(bin_idx) = parent1(bin_idx);
+            if parent1(status_idx) == parent2(status_idx)
+                child1(status_idx) = parent1(status_idx);
+                child2(status_idx) = parent1(status_idx);
             else
-                child1(bin_idx) = randi([0, 1]);
-                child2(bin_idx) = 1 - child1(bin_idx);  % Opposite value
+                child1(status_idx) = randi([0, 1]);
+                child2(status_idx) = 1 - child1(status_idx);
             end
 
+            if parent1(freq_idx) == parent2(freq_idx)
+                child1(freq_idx) = parent1(freq_idx);
+                child2(freq_idx) = parent1(freq_idx);
+            else
+                child1(freq_idx) = randi([0, 1]);
+                child2(freq_idx) = 1 - child1(freq_idx);
+            end
         end
 
-        % Clamp continuous parameters to bounds
-        child1(1:end-1) = clampToBounds(child1(1:end-1), bounds(1:end-1,:));
-        child2(1:end-1) = clampToBounds(child2(1:end-1), bounds(1:end-1,:));
+        for bs = 1:n_fbs
+            idx = (bs-1)*blockSize + 1 : (bs-1)*blockSize + 4;
+            child1(idx) = clampToBounds(child1(idx), bounds(idx,:));
+            child2(idx) = clampToBounds(child2(idx), bounds(idx,:));
+        end
     else
         child1 = parent1;
         child2 = parent2;
