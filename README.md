@@ -24,9 +24,8 @@ Each FBS is encoded with 6 decision variables:
 3. `z` altitude (m)
 4. transmit power (W)
 5. power on/off status (binary)
-6. reserved binary flag (kept for compatibility; multiband details omitted)
 
-So total chromosome size is `6 * numBS`.
+So total chromosome size is `5 * numBS`.
 
 ## Execution Flow
 
