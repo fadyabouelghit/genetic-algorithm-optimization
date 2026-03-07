@@ -1,108 +1,99 @@
-# Flying Base Station Optimization using Genetic Algorithms
+# Flying Base Station Optimization with Genetic Algorithms
 
-This project implements a Genetic Algorithm (GA) to optimize the **3D location** and **transmission power** of **Flying Base Stations (FBSs)**. The goal is to maximize user connectivity while minimizing transmission power, using a realistic SINR evaluation framework based on **QuaDRiGa** propagation models.
+This repository optimizes Flying Base Station (FBS) deployment using MATLAB + QuaDRiGa.  
+The current workflow supports:
+- Single-objective GA (`optimizeBaseStation.m`)
+- Optional multi-objective GA / NSGA-II style search (`optimizeBaseStationMoga.m`)
+- SINR-based evaluation with optional Macro Base Stations (MBS) and cached MBS power maps
 
----
+Multiband behavior is intentionally not documented here (per current scope).
 
-## Project Structure
-your_project_folder/
-│
-├── optimize_base_station_ga.m          # Main script to run the optimization
-│
-├── optimizeBaseStation.m               # Core GA loop
-├── optimizeBaseStationMoga.m           # Multi-objective GA (Pareto front)
-├── evaluatePopulation.m                # Fitness evaluation logic (based on SINR)
-├── SINREvaluation.m                    # SINR and connectivity computation
-│
-├── initializePopulation_ppp.m          # Population init using Matern Point Process
-├── initializePopulation_sobol.m        # (Optional) Sobol initialization
-│
-├── selectParents.m                     # Tournament parent selection
-├── mutate.m                            # Gaussian + Bernoulli mutation
-├── crossover_blend.m                   # Blend crossover operator
-├── crossover_sbx.m                     # Simulated Binary Crossover (optional)
-├── crossover.m                         # Arithmetic crossover (optional)
-│
-├── reflectToBounds.m                   # Ensures individuals stay within bounds
-├── clampToBounds.m                     # Clamps values between bounds
-├── mergeParams.m                       # Merge user-defined and default parameters
-├── maternPP.m                          # Generates repulsive FBS layouts
-│
-└── README.md                           # You are here
+## Main Files
 
----
+- `optimize_base_station_ga.m`: main entry script for experiment setup and GA execution
+- `optimizeBaseStation.m`: single-objective GA loop
+- `optimizeBaseStationMoga.m`: multi-objective GA loop (users vs power)
+- `evaluatePopulation.m`: computes fitness/objectives for each individual
+- `SINREvaluation.m`: computes per-user SINR/connectivity/rate metrics
+- `precompute_mbs_power_maps.m`: precomputes and caches MBS power maps
+- `initializePopulation_uniform.m`, `selectParents.m`, `crossover_blend.m`, `mutate.m`: GA operators
 
-## Call Order and Execution Flow
+## Optimization Variables (Per FBS)
 
-1. **`optimize_base_station_ga.m`**
-   - Initializes antennas and GA parameters
-   - Calls `optimizeBaseStation(...)`
-   - Optionally launches `optimizeBaseStationMoga(...)` to trace the Pareto front
+Each FBS is encoded with 6 decision variables:
+1. `x` position (m)
+2. `y` position (m)
+3. `z` altitude (m)
+4. transmit power (W)
+5. power on/off status (binary)
+6. reserved binary flag (kept for compatibility; multiband details omitted)
 
-2. **`optimizeBaseStation.m`**
-   - Initializes population via `initializePopulation_ppp(...)`
-   - Evaluates fitness using `evaluatePopulation(...)`
-   - Applies GA operators: `selectParents`, `crossover_blend`, `mutate`
-   - Tracks and visualizes best solutions
+So total chromosome size is `6 * numBS`.
 
-3. **`evaluatePopulation.m`**
-   - Computes fitness based on number of connected users and total power
-   - Calls `SINREvaluation(...)`
+## Execution Flow
 
-4. **`SINREvaluation.m`**
-   - Computes SINR using QuaDRiGa `power_map` functions
-   - Returns number of connected users and total transmitted power
+1. `optimize_base_station_ga.m` defines:
+   - Area dimensions and MBS layout
+   - Antenna objects
+   - Cached MBS power maps (`precompute_mbs_power_maps`)
+   - GA parameters (`params`)
+2. For single-objective mode (`runMoga = false`):
+   - calls `optimizeBaseStation(...)`
+3. For multi-objective mode (`runMoga = true`):
+   - calls `optimizeBaseStationMoga(...)`
 
----
+## Fitness and Metrics
+
+`evaluatePopulation.m` gets metrics from `SINREvaluation.m` and supports:
+- `targetIdx = 1`: connectivity/power composite score
+- `targetIdx = 2`: maximize average connected-user spectral efficiency (`avg_rate_connected_bpsHz`)
+
+Single-objective GA currently uses `targetIdx = 2` (average rate).
+
+Tracked metrics include:
+- total connected users
+- FBS-connected users
+- MBS-connected users
+- total transmitted power
+- average connected-user rate (bps/Hz)
+
+## Run Instructions
+
+From MATLAB:
+
+```matlab
+optimize_base_station_ga
+```
+
+## Key Parameters (`optimize_base_station_ga.m`)
+
+- `numBS`: number of FBS nodes
+- `populationSize`, `numGenerations`, `initialPopulationSize`
+- `crossoverProb`, `mutationProb`, `mutationScale`
+- `bounds`: repeated per-FBS variable limits
+- `fitnessWeights.beta`, `fitnessWeights.gamma`, `fitnessWeights.fbsWeight`, `fitnessWeights.fbsExponent`
+- `maxUsers`, `sinrThreshold`
+- `enableLogging`, `enablePerformancePlotting`, `plotTrajectory`
+- `spaceLimit`: `[W, H]`
+- `mbsCache`: output of `precompute_mbs_power_maps`
+
+## Logging
+
+If `enableLogging = true`, `optimizeBaseStation.m` writes a CSV under `logs/` with run summary fields such as:
+- GA weights/probabilities
+- number of FBSs
+- final FBS coordinates/status/powers
+- total power
+- connected-user split (FBS vs MBS)
+- average rate
 
 ## Dependencies
 
-- MATLAB R2021b or later
-- [QuaDRiGa](https://quadriga-channel-model.de) channel simulator (installed and licensed)
-- Required Toolboxes:
-  - Optimization Toolbox
-  - Statistics and Machine Learning Toolbox
+- MATLAB (tested with modern releases)
+- QuaDRiGa (required for `power_map` calls)
+- Parallel Computing Toolbox recommended (`parfor` in SINR evaluation)
 
----
+## Notes
 
-## How to Run
-
-Run the optimization from the MATLAB command window:
-
-```matlab
->> optimize_base_station_ga
-```
-To modify the optimization behavior, edit the params struct inside optimize_base_station_ga.m:
-
-```
-params = struct(...
-    'populationSize', 10, ...
-    'numGenerations', 10, ...
-    'initialPopulationSize', 20, ...
-    'crossoverProb', 0.3, ...
-    'mutationProb', 0.7, ...
-    'fitnessWeights', struct('beta', 1.0, 'gamma', 1.0, 'epsilon', 1e-3, 'fbsWeight', 0.0, 'fbsExponent', 1.0), ...
-    'plotTrajectory', false, ...
-    'maxUsers', 1000, ...
-    'sinrThreshold', 5, ...
-    'enableLogging', true, ...
-    'logFile', 'ga_results_log.csv', ...
-    'numBS', numBS, ...
-    'bounds', repmat([0 1500; 0 1500; 20 150; 7 10.5; 0 1], numBS, 1), ...
-    'mutationScale', 0.17, ...
-    'spaceLimit', 1500, ... 
-    'verbose', 1 ...
-);
-```
-
-`initialPopulationSize` lets you sample a larger (or smaller) random pool for generation 0 and then down-select to `populationSize` before evolution begins. Set `plotTrajectory = true` (currently for single-FBS runs) to watch the population’s X-Y-Z locations update each generation, with active individuals marked by `o` and inactive ones by `x`. `maxUsers` and `sinrThreshold` also feed into the SINR evaluation (instead of hard-coded values). Inside `fitnessWeights`, `beta` controls how strongly connectivity is rewarded, `gamma` controls how aggressively transmit power is penalized, `epsilon` prevents singularities, while `fbsWeight` (0–1) blends in an extra term that rewards the fraction of users attached to FBS nodes (shaped by `fbsExponent`). When `enableLogging` is true each run writes a timestamped CSV under `logs/` (e.g., `logs/ga_results_YYYYMMDD_HHMMSS.csv`) capturing the hyperparameters, number of FBSs, best individual locations, and resulting connectivity/power stats for offline analysis.
-
-### Observing the Pareto Front (MOGA)
-
-The script now enables the multi-objective GA branch by default (`runMoga = true`). This path invokes `optimizeBaseStationMoga`, which:
-
-- Treats connected users (maximize) and transmitted power (minimize) as separate objectives through NSGA-II.
-- Builds and prints the final Pareto-optimal table (`ConnectedUsers`, `TransmittedPowerW`, `AvgRatebpsHz`).
-- Generates a Pareto front plot showing how solutions evolve per generation.
-
-To skip the multi-objective stage, set `runMoga = false` inside `optimize_base_station_ga.m`.
+- `plotTrajectory` currently supports only `numBS == 1`.
+- The repository also contains RL-related scripts/notebooks; they are separate from the GA path described above.
