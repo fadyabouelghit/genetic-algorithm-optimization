@@ -2,7 +2,7 @@
 
 clearvars;
 clear;
-clc;
+% clc;
 
 % ---------- Experiment I/O setup ----------
 % timestamp = datestr(now,'yyyymmdd_HHMMSS');
@@ -47,7 +47,7 @@ cache = precompute_mbs_power_maps( ...
 disp(['Generated ', num2str(numMbs), ' MBSs']);
 
 
-numBS = 1; % number of FBSs
+numBS = 3; % number of FBSs
 containsMbs = 1;
 params = struct(...
     'enablePerformancePlotting', true, ...

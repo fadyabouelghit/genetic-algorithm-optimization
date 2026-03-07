@@ -54,7 +54,7 @@ if params.enableLogging
     params.logFile = fullfile(logDir, [baseName ext]);
 end
 % 1 -> connectivity / 2 -> avg sum rate
-targetIdx = 1; 
+targetIdx = 2; 
 
 % Initialize history tracking
 history = struct(...
