@@ -6,8 +6,6 @@ The current workflow supports:
 - Optional multi-objective GA / NSGA-II style search (`optimizeBaseStationMoga.m`)
 - SINR-based evaluation with optional Macro Base Stations (MBS) and cached MBS power maps
 
-Multiband behavior is intentionally not documented here (per current scope).
-
 ## Main Files
 
 - `optimize_base_station_ga.m`: main entry script for experiment setup and GA execution
