@@ -17,6 +17,7 @@ function [bestIndividual, bestFitness, history] = optimizeBaseStation(l, contain
 
 % Setup diagnostics
     defaultParams.verbose = 1;
+    defaultParams.targetIdx = 1;  % 1 -> connectivity, 2 -> avg sum rate
     defaultParams.fitnessWeights = struct('beta', 1, 'gamma', 1, 'epsilon', 1e-3, 'fbsWeight', 0, 'fbsExponent', 1);
     defaultParams.initialPopulationSize = [];
     defaultParams.plotTrajectory = false;
@@ -54,7 +55,7 @@ if params.enableLogging
     params.logFile = fullfile(logDir, [baseName ext]);
 end
 % 1 -> connectivity / 2 -> avg sum rate
-targetIdx = 2; 
+targetIdx = params.targetIdx;
 
 % Initialize history tracking
 history = struct(...
@@ -293,6 +294,15 @@ bsBandIds = [fbsFreqFlags, repmat(params.mbsBandId, 1, numMbs)];
         fbsAntennaEval, bestCore(5:blockSize:end), bestCore(1:blockSize:end), bestCore(2:blockSize:end), bestCore(3:blockSize:end), params.numBS, ...
         bestCore(4:blockSize:end), mbs_y, mbs_x, mbs_height, mbs_power, ...
         0, params.spaceLimit(1), 0, params.spaceLimit(2), params.maxUsers, params.sinrThreshold, containsMbs, antennaObjectMbs, params.mbsCache, bsBandIds);
+
+% Store raw physical metrics on history for callers to use
+history.rawMetrics = struct( ...
+    'numUsers',          numUsers, ...
+    'fbsUsers',          fbsUsers, ...
+    'mbsUsers',          mbsUsers, ...
+    'transmittedPower',  transmittedPower, ...
+    'avgRate',           avg_rate_connected_bpsHz, ...
+    'fbsFreqFlags',      fbsFreqFlags);
 
 if params.verbose > 0
     fprintf('\n=== Optimization Complete ===\n');

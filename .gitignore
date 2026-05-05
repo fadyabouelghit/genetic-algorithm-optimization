@@ -9,3 +9,21 @@ venv/
 cache_mbs_maps/
 ppo_logs/
 ppo_runs/
+
+# Experiment harness scripts (local, not for distribution)
+ppo_experiment.py
+ppo_experiment_example.ipynb
+ga_experiment.m
+ga_experiment_example.m
+plot_trajectories.py
+plot_trajectories_example.ipynb
+
+# Experiment harness outputs
+test_logs/
+ga_runs/
+ga_test_logs/
+ga_training_log.csv
+training_log.csv
+
+# IDE
+.vscode/
