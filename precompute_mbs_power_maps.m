@@ -1,8 +1,8 @@
 function cache = precompute_mbs_power_maps(mbs_params, antennaObjectMbs, subset, scenario, mode, ue_height, cacheDir, returnCell)
-% Precompute (or load) per-MBS power maps and store them in a cache struct.
+% Precompute (or load) per-MBS, per-band power maps and store them in a cache struct array.
 % Inputs:
 %   mbs_params        : 4×N [x; y; z; power]
-%   antennaObjectMbs  : 1×N array of antenna objects (template cloned per MBS)
+%   antennaObjectMbs  : nBands×N array of antenna templates (one per band per MBS)
 %   subset            : struct with fields xmin, xmax, ymin, ymax
 %   scenario          : e.g., '3GPP_38.901_UMa_LOS'
 %   mode              : e.g., 'quick'
@@ -10,17 +10,18 @@ function cache = precompute_mbs_power_maps(mbs_params, antennaObjectMbs, subset,
 %   cacheDir          : folder to store .mat cache files (optional but recommended)
 %
 % Output:
-%   cache(i) : struct with fields
+%   cache(b, i) : struct with fields
 %       .key, .x, .y, .z, .power, .scenario, .subset (struct),
-%       .ue_height, .mode, .x_coords, .y_coords, .map (single)
+%       .ue_height, .mode, .band, .center_freq,
+%       .x_coords, .y_coords, .map (single)
 %
 % Notes:
-%   - Ensures all sites share identical x_coords/y_coords; warns if not.
-%   - Uses on-disk caching keyed by MD5 of the config to avoid recomputing.
+%   - Ensures all sites/bands share identical x_coords/y_coords; warns if not.
+%   - Uses on-disk caching keyed by MD5 of the config (incl. band) to avoid recomputing.
 
     arguments
         mbs_params (4,:) double
-        antennaObjectMbs (1,:)    % pass your replicated antenna objects
+        antennaObjectMbs (:,:)    % nBands × N
         subset struct
         scenario char
         mode char
@@ -30,12 +31,19 @@ function cache = precompute_mbs_power_maps(mbs_params, antennaObjectMbs, subset,
     end
 
     N = size(mbs_params, 2);
+    nBands = size(antennaObjectMbs, 1);
+    assert(size(antennaObjectMbs, 2) == N, ...
+        'antennaObjectMbs must be nBands × N (got %d × %d, N=%d).', ...
+        size(antennaObjectMbs,1), size(antennaObjectMbs,2), N);
+
     if ~isempty(cacheDir) && ~exist(cacheDir,'dir')
         mkdir(cacheDir);
     end
-    cache = repmat(struct('key',[], 'x',[], 'y',[], 'z',[], 'power',[], ...
-                          'scenario',[], 'subset',[], 'ue_height',[], 'mode',[], ...
-                          'x_coords',[], 'y_coords',[], 'map',[]), 1, N);
+    emptyEntry = struct('key',[], 'x',[], 'y',[], 'z',[], 'power',[], ...
+                        'scenario',[], 'subset',[], 'ue_height',[], 'mode',[], ...
+                        'band',[], 'center_freq',[], ...
+                        'x_coords',[], 'y_coords',[], 'map',[]);
+    cache = repmat(emptyEntry, nBands, N);
 
     commonGrid = [];  % to verify identical coordinate grids across sites
 
@@ -45,89 +53,99 @@ function cache = precompute_mbs_power_maps(mbs_params, antennaObjectMbs, subset,
         z  = mbs_params(3,i);
         pw = mbs_params(4,i);
 
-        key = make_mbs_key(x,y,z,pw,scenario,mode,ue_height,subset);
+        for b = 1:nBands
+            ant = antennaObjectMbs(b, i);
+            center_freq = NaN;
+            try
+                if isprop(ant, 'center_frequency') || isfield(ant, 'center_frequency')
+                    center_freq = ant.center_frequency;
+                end
+            catch
+                center_freq = NaN;
+            end
 
-        map_file = '';
-        if ~isempty(cacheDir)
-            map_file = fullfile(cacheDir, [key '.mat']);
-        end
+            key = make_mbs_key(x, y, z, pw, scenario, mode, ue_height, subset, b, center_freq);
 
-        if ~isempty(map_file) && exist(map_file,'file')
-            S = load(map_file, 'map', 'x_coords', 'y_coords', 'meta');
-            map       = S.map;
-            x_coords  = S.x_coords;
-            y_coords  = S.y_coords;
-        else
-            % Compute once
-            ant = antennaObjectMbs(i);
-            ant.tx_position(:,1) = [x; y; z];
+            map_file = '';
+            if ~isempty(cacheDir)
+                map_file = fullfile(cacheDir, [key '.mat']);
+            end
 
-            % Your original call
-            [cellMaps, x_coords, y_coords] = ant.power_map( ...
-                scenario, mode, 1, ...
-                subset.xmin, subset.xmax, subset.ymin, subset.ymax, ...
-                ue_height, pw);
+            if ~isempty(map_file) && exist(map_file,'file')
+                S = load(map_file, 'map', 'x_coords', 'y_coords', 'meta');
+                map      = S.map;
+                x_coords = S.x_coords;
+                y_coords = S.y_coords;
+            else
+                ant.tx_position(:,1) = [x; y; z];
 
-            map = sum(cat(3, cellMaps{:}), 3);
-            map = single(map);  % memory saver, usually sufficient
+                [cellMaps, x_coords, y_coords] = ant.power_map( ...
+                    scenario, mode, 1, ...
+                    subset.xmin, subset.xmax, subset.ymin, subset.ymax, ...
+                    ue_height, pw);
 
-            % Save to disk cache
-            if ~isempty(map_file)
-                meta = struct('x',x,'y',y,'z',z,'power',pw, ...
-                              'scenario',scenario,'mode',mode, ...
-                              'ue_height',ue_height,'subset',subset);
-                try
-                    save(map_file, 'map', 'x_coords', 'y_coords', 'meta', '-v7.3');
-                catch
-                    % If -v7.3 fails for any reason, fallback
-                    save(map_file, 'map', 'x_coords', 'y_coords', 'meta');
+                map = sum(cat(3, cellMaps{:}), 3);
+                map = single(map);
+
+                if ~isempty(map_file)
+                    meta = struct('x',x,'y',y,'z',z,'power',pw, ...
+                                  'scenario',scenario,'mode',mode, ...
+                                  'ue_height',ue_height,'subset',subset, ...
+                                  'band',b,'center_freq',center_freq);
+                    try
+                        save(map_file, 'map', 'x_coords', 'y_coords', 'meta', '-v7.3');
+                    catch
+                        save(map_file, 'map', 'x_coords', 'y_coords', 'meta');
+                    end
+                end
+            end
+
+            cache(b, i).key         = key;
+            cache(b, i).x           = x;
+            cache(b, i).y           = y;
+            cache(b, i).z           = z;
+            cache(b, i).power       = pw;
+            cache(b, i).scenario    = scenario;
+            cache(b, i).subset      = subset;
+            cache(b, i).ue_height   = ue_height;
+            cache(b, i).mode        = mode;
+            cache(b, i).band        = b;
+            cache(b, i).center_freq = center_freq;
+            cache(b, i).x_coords    = x_coords;
+            cache(b, i).y_coords    = y_coords;
+            cache(b, i).map         = map;
+
+            thisGrid = [numel(x_coords), numel(y_coords), x_coords(1), x_coords(end), y_coords(1), y_coords(end)];
+            if isempty(commonGrid)
+                commonGrid = thisGrid;
+            else
+                if any(abs(thisGrid - commonGrid) > 1e-9)
+                    warning('MBS #%d band %d grid differs from others. Power maps may not align exactly.', i, b);
                 end
             end
         end
-
-        % Fill cache entry
-        cache(i).key       = key;
-        cache(i).x         = x;
-        cache(i).y         = y;
-        cache(i).z         = z;
-        cache(i).power     = pw;
-        cache(i).scenario  = scenario;
-        cache(i).subset    = subset;
-        cache(i).ue_height = ue_height;
-        cache(i).mode      = mode;
-        cache(i).x_coords  = x_coords;
-        cache(i).y_coords  = y_coords;
-        cache(i).map       = map;
-
-        % Consistency check for grid alignment
-        thisGrid = [numel(x_coords), numel(y_coords), x_coords(1), x_coords(end), y_coords(1), y_coords(end)];
-        if isempty(commonGrid)
-            commonGrid = thisGrid;
-        else
-            if any(abs(thisGrid - commonGrid) > 1e-9)
-                warning('MBS #%d grid differs from others. Power maps may not align exactly.', i);
-            end
-        end
     end
+
     if returnCell
         cache = arrayfun(@(s) s, cache, 'UniformOutput', false);
     end
 end
 
-function [map, x_coords, y_coords] = lookup_mbs_power_map(cache, i)
-% Retrieve cached map for MBS index i
-    map       = cache(i).map;
-    x_coords  = cache(i).x_coords;
-    y_coords  = cache(i).y_coords;
+function [map, x_coords, y_coords] = lookup_mbs_power_map(cache, b, i)
+% Retrieve cached map for MBS index i at band b
+    map      = cache(b, i).map;
+    x_coords = cache(b, i).x_coords;
+    y_coords = cache(b, i).y_coords;
 end
 
-function key = make_mbs_key(x,y,z,pw,scenario,mode,ue_height,subset)
+function key = make_mbs_key(x,y,z,pw,scenario,mode,ue_height,subset,band,center_freq)
 % Deterministic key from full configuration (robust to float formatting)
     payload = struct('x',x,'y',y,'z',z,'pw',pw, ...
                      'scenario',string(scenario), 'mode',string(mode), ...
                      'ue',ue_height, ...
-                     'xmin',subset.xmin,'xmax',subset.xmax,'ymin',subset.ymin,'ymax',subset.ymax);
-    s = jsonencode(payload);  % stable-ish textual representation
+                     'xmin',subset.xmin,'xmax',subset.xmax,'ymin',subset.ymin,'ymax',subset.ymax, ...
+                     'band',band, 'fc',center_freq);
+    s = jsonencode(payload);
     key = md5_of_string(s);
 end
 

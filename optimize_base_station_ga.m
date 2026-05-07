@@ -14,7 +14,9 @@ clear;
 coverageFreq = 2e9;
 capacityFreq = 2e9; %was 2.6
 fbsAntenna = [setup_antenna(coverageFreq), setup_antenna(capacityFreq)];
-mbsAntenna = setup_antenna(); %defaults to 2e9 center freq if argument left empty  
+% MBSs share the same band space as FBSs: row 1 = coverage, row 2 = capacity.
+% To disable GA control of MBS frequency, set both freqs to the same value.
+mbsAntenna = [setup_antenna(coverageFreq), setup_antenna(capacityFreq)];
 
 numMbs = 1;  
 W = 2000; H = 1500;      
@@ -25,11 +27,38 @@ ISD = 500;               % inter-site distance
 % ys = [1000,2200];
 mbs_height   = 25;
 mbs_power    = 20;
-[mbs_params, antennaObjectMbs, containsMbs, numMbs] = ...
+[mbs_params, antennaObjectMbs, ~, ~] = ...
     pack_mbs_params(xs, ys, mbs_height, mbs_power, mbsAntenna);
 tempForX = mbs_params(1,:);
 mbs_params(1,:) = mbs_params(2,:);
 mbs_params(2,:) = tempForX;
+
+% ---------- Extra fixed base stations (e.g. femtocells) ----------
+% Each entry is treated as a fixed BS the GA does not move; only its band
+% flag enters the chromosome (one extra gene per entry, appended to bounds
+% via numMbs below). Leave `extraBs = []` to keep the base setup unchanged.
+%
+% Coordinates are in the same world frame as generate_hex_sites (x in [0,W],
+% y in [0,H]). Omit `.antenna` to inherit mbsAntenna; set it to a 1×nBands
+% row of setup_antenna(...) handles for a per-station band stack.
+%
+% Example (uncomment and edit):
+% extraBs = [ ...
+%     struct('x', 600,  'y', 400, 'height', 10, 'power', 0.2, 'antenna', []), ...
+%     struct('x', 1400, 'y', 900, 'height', 10, 'power', 0.2, ...
+%            'antenna', [setup_antenna(2.6e9), setup_antenna(2.6e9)]) ...
+% ];
+
+
+extraBs = [];
+
+numBaseMbs = size(mbs_params, 2);
+[mbs_params, antennaObjectMbs, containsMbs, numMbs] = ...
+    append_fixed_bs(mbs_params, antennaObjectMbs, extraBs, mbsAntenna);
+% Extras are pinned to the capacity band (flag=1 -> antenna row 2),
+% regardless of params.gaControlsMbsBand. The corresponding chromosome
+% genes still exist but are ignored at evaluation time.
+mbsForcedCapacityMask = [false(1, numBaseMbs), true(1, numMbs - numBaseMbs)];
 
 subset = struct('xmin', 0, 'xmax', W, ...
                 'ymin', 0, 'ymax', H);
@@ -48,7 +77,6 @@ disp(['Generated ', num2str(numMbs), ' MBSs']);
 
 
 numBS = 2; % number of FBSs
-containsMbs = 1;
 params = struct(...
     'enablePerformancePlotting', true, ...
     'enableLogging', false, ...
@@ -64,8 +92,10 @@ params = struct(...
     'sinrThreshold', 5, ...
     'logFile', '', ...
     'numBS', numBS, ...
-    'mbsBandId', 0, ... % set to the index of the band you'd like the MBS to assume --- relevant for interference calculations
-    'bounds', repmat([0 W; 0 H; 20 150; 7 10.5; 0 1; 0 1], numBS, 1), ...
+    'gaControlsFbsBand', true, ...   % false -> FBS frequency flag held at 0 (coverage band)
+    'gaControlsMbsBand', true, ...   % false -> MBS frequency flag held at 0 (coverage band)
+    'mbsForcedCapacityMask', mbsForcedCapacityMask, ...  % per-MBS pin to capacity band; overrides gaControlsMbsBand
+    'bounds', [repmat([0 W; 0 H; 20 150; 7 10.5; 0 1; 0 1], numBS, 1); repmat([0 1], numMbs, 1)], ...
     'spaceLimit', [W,H], ...
     'mbsCache', cache, ...
     'verbose', 1, ...

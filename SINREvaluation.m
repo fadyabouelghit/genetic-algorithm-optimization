@@ -31,14 +31,14 @@ function [user_positions, df_users_table, total_connected_users, total_transmitt
         if isempty(mbsCache)
             mbsCache = struct([]);
         else
-            mbsCache = [mbsCache{:}];
+            mbsCache = reshape([mbsCache{:}], size(mbsCache));
         end
     end
 
     num_fbs_scalar = round(double(no_fbs));
     num_mbs_scalar = 0;
     if containsMbs
-        num_mbs_scalar = numel(antennaObjectMbs);
+        num_mbs_scalar = size(antennaObjectMbs, 2);
     end
     total_bs = num_fbs_scalar + num_mbs_scalar;
     if nargin < 21 || isempty(bsBandIds)
@@ -163,22 +163,25 @@ function [df_users, df_users_table, avg_rate_connected_bpsHz] = calculate_power_
 
     % MBS loop
     if containsMbs
-        num_mbs = numel(antennaObjectMbs);
+        num_mbs = size(antennaObjectMbs, 2);
         df_users(:, no_fbs+1:no_fbs+num_mbs) = 0;
-        assert(num_mbs == numel(mbsCache), 'num_mbs (%d) must equal cached sites (%d).', num_mbs, numel(mbsCache));
-        for i = 2:numel(mbsCache)
-            assert(isequal(size(mbsCache(1).map), size(mbsCache(i).map)), 'Cached MBS maps must be same size.');
+        assert(num_mbs == size(mbsCache, 2), ...
+            'num_mbs (%d) must equal cached sites (%d).', num_mbs, size(mbsCache, 2));
+        nBandsCached = size(mbsCache, 1);
+        refMap = mbsCache(1, 1).map;
+        for ii = 1:numel(mbsCache)
+            assert(isequal(size(mbsCache(ii).map), size(refMap)), ...
+                'Cached MBS maps must be same size.');
         end
 
+        mbsBandFlags = bsBandIds(no_fbs + (1:num_mbs));
         for mbs_idx = 1:num_mbs
-            % P_mbs = calculate_power(antennaObjectMbs(mbs_idx), ...
-            %     mbs_x(mbs_idx), mbs_y(mbs_idx), mbs_height(mbs_idx), mbs_power(mbs_idx), ...
-            %     subset_x_min, subset_x_max, subset_y_min, subset_y_max);
-            P_mbs = mbsCache(mbs_idx).map;
-
-            % idx = sub2ind(size(P_mbs), user_positions(:, 1), user_positions(:, 2));
-            % df_users(:, no_fbs + mbs_idx) = P_mbs(idx);
-            df_users(:,no_fbs + mbs_idx) = sample_nearest(P_mbs, user_positions);
+            bandIdx = mbsBandFlags(mbs_idx) + 1;   % flag {0,1} -> cache row {1,2}
+            assert(bandIdx >= 1 && bandIdx <= nBandsCached, ...
+                'MBS %d band index %d out of range (cache has %d bands).', ...
+                mbs_idx, bandIdx, nBandsCached);
+            P_mbs = mbsCache(bandIdx, mbs_idx).map;
+            df_users(:, no_fbs + mbs_idx) = sample_nearest(P_mbs, user_positions);
         end
     end
 

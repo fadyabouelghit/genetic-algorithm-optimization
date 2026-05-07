@@ -15,7 +15,9 @@ function [fitness, details] = evaluatePopulation(l, population, verbose, n_fbs, 
     if ~isfield(weightParams, 'fbsExponent'), weightParams.fbsExponent = 1; end
     if ~isfield(weightParams, 'maxUsers'), weightParams.maxUsers = 1000; end
     if ~isfield(weightParams, 'sinrThreshold'), weightParams.sinrThreshold = 5; end
-    if ~isfield(weightParams, 'mbsBandId'), weightParams.mbsBandId = 0; end
+    if ~isfield(weightParams, 'gaControlsFbsBand'), weightParams.gaControlsFbsBand = true; end
+    if ~isfield(weightParams, 'gaControlsMbsBand'), weightParams.gaControlsMbsBand = true; end
+    if ~isfield(weightParams, 'mbsForcedCapacityMask'), weightParams.mbsForcedCapacityMask = []; end
     beta = weightParams.beta;
     gamma = weightParams.gamma;
     epsilon = weightParams.epsilon;
@@ -23,7 +25,8 @@ function [fitness, details] = evaluatePopulation(l, population, verbose, n_fbs, 
     fbsExponent = weightParams.fbsExponent;
     maxUsers = weightParams.maxUsers;
     sinrThreshold = weightParams.sinrThreshold;
-    mbsBandId = weightParams.mbsBandId;
+    gaControlsFbsBand = weightParams.gaControlsFbsBand;
+    gaControlsMbsBand = weightParams.gaControlsMbsBand;
 
     fitness = zeros(size(population,1), 1);
     numIndividuals = size(population,1);
@@ -35,25 +38,35 @@ function [fitness, details] = evaluatePopulation(l, population, verbose, n_fbs, 
         'mbsUsers', zeros(numIndividuals, 1), ...
         'activeFbs', zeros(numIndividuals, 1));
 
-    powerBounds = bounds(4:6:end, :);
+    fbsBoundRows = bounds(1:6*n_fbs, :);
+    powerBounds = fbsBoundRows(4:6:end, :);
     maxPower = sum(powerBounds(:,2));
     minPower = 0;
 
     mbs_x = mbs_params(1,:); mbs_y = mbs_params(2,:);
     mbs_height = mbs_params(3,:); mbs_power = mbs_params(4,:);
     blockSize = 6;
+    numMbs = containsMbs * size(mbs_params, 2);
+    fbsCount = blockSize * n_fbs;
+    expectedLen = fbsCount + numMbs;
 
     for i = 1:size(population,1)
         ind = population(i,:);
-        if numel(ind) ~= blockSize * n_fbs
-            error('evaluatePopulation expects %d decision vars (6 per FBS), got %d.', blockSize*n_fbs, numel(ind));
+        if numel(ind) ~= expectedLen
+            error('evaluatePopulation expects %d decision vars (6 per FBS + 1 per MBS), got %d.', ...
+                expectedLen, numel(ind));
         end
-        x = ind(1:blockSize:end);
-        y = ind(2:blockSize:end);
-        z = ind(3:blockSize:end);
-        power = ind(4:blockSize:end);
-        power_status = ind(5:blockSize:end);
-        fbsFreqFlags = double(ind(6:blockSize:end) >= 0.5);
+        fbsBlock = ind(1:fbsCount);
+        x = fbsBlock(1:blockSize:end);
+        y = fbsBlock(2:blockSize:end);
+        z = fbsBlock(3:blockSize:end);
+        power = fbsBlock(4:blockSize:end);
+        power_status = fbsBlock(5:blockSize:end);
+        if gaControlsFbsBand
+            fbsFreqFlags = double(fbsBlock(6:blockSize:end) >= 0.5);
+        else
+            fbsFreqFlags = zeros(1, n_fbs);
+        end
 
         fbsAntennaEval = repmat(l(1), 1, n_fbs);
         if numel(l) >= 2
@@ -61,8 +74,22 @@ function [fitness, details] = evaluatePopulation(l, population, verbose, n_fbs, 
             fbsAntennaEval(capMask) = l(2);
         end
 
-        numMbs = containsMbs * size(mbs_params, 2);
-        bsBandIds = [fbsFreqFlags, repmat(mbsBandId, 1, numMbs)];
+        if numMbs > 0
+            if gaControlsMbsBand
+                mbsFreqFlags = double(ind(fbsCount + (1:numMbs)) >= 0.5);
+            else
+                mbsFreqFlags = zeros(1, numMbs);
+            end
+            if ~isempty(weightParams.mbsForcedCapacityMask)
+                mask = logical(weightParams.mbsForcedCapacityMask);
+                if numel(mask) == numMbs
+                    mbsFreqFlags(mask) = 1;
+                end
+            end
+        else
+            mbsFreqFlags = zeros(1, 0);
+        end
+        bsBandIds = [fbsFreqFlags, mbsFreqFlags];
 
         [~, ~, numUsers, transmittedPower, avg_rate_connected_bpsHz, fbsUsers, mbsUsers] = SINREvaluation(fbsAntennaEval, power_status, ...
             x, y, z, n_fbs, power, ...

@@ -23,7 +23,8 @@ function [bestIndividual, bestFitness, history] = optimizeBaseStation(l, contain
     defaultParams.plotTrajectory = false;
     defaultParams.maxUsers = 1000;
     defaultParams.sinrThreshold = 5;
-    defaultParams.mbsBandId = 0;
+    defaultParams.gaControlsFbsBand = true;   % false -> FBS freq flag held at 0 (coverage band)
+    defaultParams.gaControlsMbsBand = true;   % false -> MBS freq flag held at 0 (coverage band)
     defaultParams.enableLogging = true;
     defaultParams.enablePerformancePlotting = false;
     defaultParams.logFile = '';
@@ -83,9 +84,11 @@ if params.verbose > 0
     disp('Initializing population...');
 end
 
+numMbs = containsMbs * size(mbs_params, 2);
+
 filename = 'population_evolution.xlsx';
-function headers = create_headers(n_fbs)
-    headers = cell(1, n_fbs*6 + 1);
+function headers = create_headers(n_fbs, n_mbs)
+    headers = cell(1, n_fbs*6 + n_mbs + 1);
     headers{1} = 'Generation';
     for bs = 1:n_fbs
         base = (bs-1)*6;
@@ -96,15 +99,24 @@ function headers = create_headers(n_fbs)
         headers{base+6} = sprintf('BS%d_Power_status', bs);
         headers{base+7} = sprintf('BS%d_fbsFreqFlag', bs);
     end
+    for m = 1:n_mbs
+        headers{n_fbs*6 + 1 + m} = sprintf('MBS%d_FreqFlag', m);
+    end
 end
 
 
-population = initializePopulation_uniform(params.initialPopulationSize, params.bounds, params.numBS);
+bandControls = struct('fbsBand', params.gaControlsFbsBand, 'mbsBand', params.gaControlsMbsBand);
+
+population = initializePopulation_uniform(params.initialPopulationSize, params.bounds, params.numBS, numMbs, bandControls);
 
 evalParams = params.fitnessWeights;
 evalParams.maxUsers = params.maxUsers;
 evalParams.sinrThreshold = params.sinrThreshold;
-evalParams.mbsBandId = params.mbsBandId;
+evalParams.gaControlsFbsBand = params.gaControlsFbsBand;
+evalParams.gaControlsMbsBand = params.gaControlsMbsBand;
+if isfield(params, 'mbsForcedCapacityMask')
+    evalParams.mbsForcedCapacityMask = params.mbsForcedCapacityMask;
+end
 
 if params.initialPopulationSize > params.populationSize
     [initialFitness, ~] = evaluatePopulation(l, population, params.verbose, params.numBS, ...
@@ -139,7 +151,7 @@ if trajectoryPlot.enabled
     caxis(trajectoryPlot.ax, [1 params.numGenerations]);
 end
 
-headers = create_headers(params.numBS);
+headers = create_headers(params.numBS, numMbs);
 initialData = [zeros(params.populationSize,1) population]; % Gen 0
 % writetable(array2table(initialData, 'VariableNames', headers), filename, 'WriteMode', 'overwrite');
 
@@ -168,7 +180,8 @@ for gen = 1:params.numGenerations
     evalParams = params.fitnessWeights;
     evalParams.maxUsers = params.maxUsers;
     evalParams.sinrThreshold = params.sinrThreshold;
-    evalParams.mbsBandId = params.mbsBandId;
+    evalParams.gaControlsFbsBand = params.gaControlsFbsBand;
+    evalParams.gaControlsMbsBand = params.gaControlsMbsBand;
     [fitness, evalDetails] = evaluatePopulation(l, population, params.verbose, params.numBS, params.spaceLimit ,containsMbs, mbs_params, antennaObjectMbs, params.bounds, params.mbsCache, targetIdx, evalParams);
     
     if trajectoryPlot.enabled
@@ -203,12 +216,12 @@ for gen = 1:params.numGenerations
 
         for fb = 1:params.numBS
             startIdx = (fb-1)*6 + 1;
-            
+
             coords = bestIndividual(startIdx : startIdx+2);
             coordCells = cellstr(num2str(coords', '%g'));
             coordStr = strjoin(coordCells, ', ');
 
-            powerVal = bestIndividual(startIdx+3);            
+            powerVal = bestIndividual(startIdx+3);
             binaryVal = bestIndividual(startIdx+4);
             fbsFreqFlag = double(bestIndividual(startIdx+5) >= 0.5);
             if fbsFreqFlag == 0
@@ -219,6 +232,16 @@ for gen = 1:params.numGenerations
 
             fprintf('Best Individual (FBS %d): [%s] Power: %.1f, Power Status: %d, Band: %s\n', ...
                     fb, coordStr, powerVal, binaryVal, fbsBandLabel);
+        end
+
+        for m = 1:numMbs
+            mbsFreqFlag = double(bestIndividual(6*params.numBS + m) >= 0.5);
+            if mbsFreqFlag == 0
+                mbsBandLabel = 'Coverage Band';
+            else
+                mbsBandLabel = 'Capacity Band';
+            end
+            fprintf('Best Individual (MBS %d): Band: %s\n', m, mbsBandLabel);
         end
         
         if params.verbose > 1
@@ -241,7 +264,7 @@ for gen = 1:params.numGenerations
         % Crossover
 %         [child1, child2, crossoverFlag] = crossover(parents(1,:), parents(2,:), params.crossoverProb, params.bounds);
 %         [child1, child2, crossoverFlag] = crossover_sbx(parents(1,:), parents(2,:), params.crossoverProb, params.bounds);
-        [child1, child2, crossoverFlag] = crossover_blend(parents(1,:), parents(2,:), params.crossoverProb, params.bounds);
+        [child1, child2, crossoverFlag] = crossover_blend(parents(1,:), parents(2,:), params.crossoverProb, params.bounds, params.numBS, bandControls);
         crossoverCount = crossoverCount + crossoverFlag;
         
         % Mutation
@@ -281,18 +304,38 @@ history.time.total = toc(totalTimer);
 bestFitness = globalBestFitness;
 bestIndividual = globalBestIndividual;
 blockSize = 6;
+fbsCount = blockSize * params.numBS;
 bestCore = bestIndividual;
-fbsFreqFlags = double(bestCore(6:blockSize:end) >= 0.5);
+fbsBlock = bestCore(1:fbsCount);
+if params.gaControlsFbsBand
+    fbsFreqFlags = double(fbsBlock(6:blockSize:end) >= 0.5);
+else
+    fbsFreqFlags = zeros(1, params.numBS);
+end
 fbsAntennaEval = repmat(l(1), 1, params.numBS);
 if numel(l) >= 2
     fbsAntennaEval(fbsFreqFlags >= 0.5) = l(2);
 end
-numMbs = containsMbs * size(mbs_params, 2);
-bsBandIds = [fbsFreqFlags, repmat(params.mbsBandId, 1, numMbs)];
+if numMbs > 0
+    if params.gaControlsMbsBand
+        mbsFreqFlags = double(bestCore(fbsCount + (1:numMbs)) >= 0.5);
+    else
+        mbsFreqFlags = zeros(1, numMbs);
+    end
+    if isfield(params, 'mbsForcedCapacityMask') && ~isempty(params.mbsForcedCapacityMask)
+        mask = logical(params.mbsForcedCapacityMask);
+        if numel(mask) == numMbs
+            mbsFreqFlags(mask) = 1;
+        end
+    end
+else
+    mbsFreqFlags = zeros(1, 0);
+end
+bsBandIds = [fbsFreqFlags, mbsFreqFlags];
 
     [~, ~, numUsers, transmittedPower, avg_rate_connected_bpsHz, fbsUsers, mbsUsers] = SINREvaluation( ...
-        fbsAntennaEval, bestCore(5:blockSize:end), bestCore(1:blockSize:end), bestCore(2:blockSize:end), bestCore(3:blockSize:end), params.numBS, ...
-        bestCore(4:blockSize:end), mbs_y, mbs_x, mbs_height, mbs_power, ...
+        fbsAntennaEval, fbsBlock(5:blockSize:end), fbsBlock(1:blockSize:end), fbsBlock(2:blockSize:end), fbsBlock(3:blockSize:end), params.numBS, ...
+        fbsBlock(4:blockSize:end), mbs_y, mbs_x, mbs_height, mbs_power, ...
         0, params.spaceLimit(1), 0, params.spaceLimit(2), params.maxUsers, params.sinrThreshold, containsMbs, antennaObjectMbs, params.mbsCache, bsBandIds);
 
 % Store raw physical metrics on history for callers to use
@@ -302,7 +345,8 @@ history.rawMetrics = struct( ...
     'mbsUsers',          mbsUsers, ...
     'transmittedPower',  transmittedPower, ...
     'avgRate',           avg_rate_connected_bpsHz, ...
-    'fbsFreqFlags',      fbsFreqFlags);
+    'fbsFreqFlags',      fbsFreqFlags, ...
+    'mbsFreqFlags',      mbsFreqFlags);
 
 if params.verbose > 0
     fprintf('\n=== Optimization Complete ===\n');
@@ -321,7 +365,7 @@ if params.verbose > 0
     
     % Create parameter table for multiple BS
     numBS = params.numBS;
-    paramNames = cell(6*numBS, 1);
+    paramNames = cell(6*numBS + numMbs, 1);
     for bs = 1:numBS
         base = (bs-1)*6;
         paramNames{base + 1} = sprintf('BS%d X (m)', bs);
@@ -331,7 +375,10 @@ if params.verbose > 0
         paramNames{base + 5} = sprintf('BS%d Power Status', bs);
         paramNames{base + 6} = sprintf('BS%d fbsFreqFlag', bs);
     end
-    
+    for m = 1:numMbs
+        paramNames{6*numBS + m} = sprintf('MBS%d FreqFlag', m);
+    end
+
     disp(array2table(bestIndividual', ...
         'VariableNames', {'Value'}, ...
         'RowNames', paramNames));
@@ -524,10 +571,13 @@ if params.enableLogging
         'mutationProb', params.mutationProb, ...
         'crossoverProb', params.crossoverProb, ...
         'numFbs', params.numBS, ...
+        'numMbs', numMbs, ...
         'finalXYZ', formatFinalLocations(bestIndividual, params.numBS), ...
         'powerStatus', formatPowerStatuses(bestIndividual, params.numBS), ...
         'totalPower', transmittedPower, ...
         'fbsPowers', formatFbsPowers(bestIndividual, params.numBS), ...
+        'fbsFreqFlags', strjoin(string(fbsFreqFlags), ';'), ...
+        'mbsFreqFlags', strjoin(string(mbsFreqFlags), ';'), ...
         'fbsConnected', fbsUsers, ...
         'mbsConnected', mbsUsers, ...
         'totalConnected', numUsers, ...
