@@ -27,3 +27,6 @@ training_log.csv
 
 # IDE
 .vscode/
+
+# Local notification settings (destinations + any embedded secrets)
+.notify_local.json

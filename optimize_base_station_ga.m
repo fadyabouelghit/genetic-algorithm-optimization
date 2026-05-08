@@ -10,21 +10,23 @@ clear;
 % if ~exist(outdir, 'dir'); mkdir(outdir); end
 % figdir = fullfile(outdir, 'figs'); if ~exist(figdir,'dir'); mkdir(figdir); end
 
-% Setup antennas and MBS parameters
-coverageFreq = 2e9;
-capacityFreq = 2e9; %was 2.6
+% Setup antennas and MBS parameters. Frequencies live in band_frequencies.m
+% so that this script, ga_experiment, and femto_configs cannot drift apart.
+freqs = band_frequencies();
+coverageFreq = freqs.coverage;
+capacityFreq = freqs.capacity;
 fbsAntenna = [setup_antenna(coverageFreq), setup_antenna(capacityFreq)];
 % MBSs share the same band space as FBSs: row 1 = coverage, row 2 = capacity.
 % To disable GA control of MBS frequency, set both freqs to the same value.
 mbsAntenna = [setup_antenna(coverageFreq), setup_antenna(capacityFreq)];
 
-numMbs = 1;  
-W = 2000; H = 1500;      
+numMbs = 2;  
+W = 4000; H = 3000;      
 margin = 100;            % edge distance threshold
 ISD = 500;               % inter-site distance
-[xs, ys] = generate_hex_sites(W, H, ISD, margin, numMbs);
-% xs = [1000,3500];
-% ys = [1000,2200];
+% [xs, ys] = generate_hex_sites(W, H, ISD, margin, numMbs);
+xs = [1000,3500];
+ys = [1000,2200];
 mbs_height   = 25;
 mbs_power    = 20;
 [mbs_params, antennaObjectMbs, ~, ~] = ...
@@ -34,14 +36,6 @@ mbs_params(1,:) = mbs_params(2,:);
 mbs_params(2,:) = tempForX;
 
 % ---------- Extra fixed base stations (e.g. femtocells) ----------
-% Each entry is treated as a fixed BS the GA does not move; only its band
-% flag enters the chromosome (one extra gene per entry, appended to bounds
-% via numMbs below). Leave `extraBs = []` to keep the base setup unchanged.
-%
-% Coordinates are in the same world frame as generate_hex_sites (x in [0,W],
-% y in [0,H]). Omit `.antenna` to inherit mbsAntenna; set it to a 1×nBands
-% row of setup_antenna(...) handles for a per-station band stack.
-%
 % Example (uncomment and edit):
 % extraBs = [ ...
 %     struct('x', 600,  'y', 400, 'height', 10, 'power', 0.2, 'antenna', []), ...
@@ -51,6 +45,11 @@ mbs_params(2,:) = tempForX;
 
 
 extraBs = [];
+% [extraBs, descr, ~] = femto_configs('residential_random_v1', 'showFigure', false);
+% [extraBs, descr, ~] = femto_configs('hotspot_clusters_v1', ...
+%             'numHotspots', 3, 'femtosPerHotspot', 2, 'showFigure', false);
+[extraBs, ~, ~] = femto_configs('coverage_fill_4kx3k_v1', 'expCode', '1-2-1');
+
 
 numBaseMbs = size(mbs_params, 2);
 [mbs_params, antennaObjectMbs, containsMbs, numMbs] = ...
@@ -92,7 +91,7 @@ params = struct(...
     'sinrThreshold', 5, ...
     'logFile', '', ...
     'numBS', numBS, ...
-    'gaControlsFbsBand', true, ...   % false -> FBS frequency flag held at 0 (coverage band)
+    'gaControlsFbsBand', false, ...   % false -> FBS frequency flag held at 0 (coverage band)
     'gaControlsMbsBand', true, ...   % false -> MBS frequency flag held at 0 (coverage band)
     'mbsForcedCapacityMask', mbsForcedCapacityMask, ...  % per-MBS pin to capacity band; overrides gaControlsMbsBand
     'bounds', [repmat([0 W; 0 H; 20 150; 7 10.5; 0 1; 0 1], numBS, 1); repmat([0 1], numMbs, 1)], ...
@@ -102,11 +101,31 @@ params = struct(...
     'targetIdx', 1 ...  % 1 -> connectivity, 2 -> avg sum rate
 );
 
+% ---------- Visualize the network universe (pre-GA) ----------
+% Run an MBS-only SINR pass to flag users already covered by the macro
+% layer; FBSs haven't been placed yet so we feed no_fbs=0.
+mbsBandFlagsPreGa = double(mbsForcedCapacityMask);
+[preGaUserPositions, preGaUsersTbl] = SINREvaluation( ...
+    [], [], [], [], [], 0, [], ...
+    [], [], [], [], ...
+    0, W, 0, H, params.maxUsers, params.sinrThreshold, ...
+    containsMbs, antennaObjectMbs, cache, mbsBandFlagsPreGa);
+
+plot_network_universe(mbs_params, numBaseMbs, W, H, params.maxUsers, ...
+    'UserPositions', preGaUserPositions, ...
+    'IsConnected',   preGaUsersTbl.is_connected, ...
+    'Title', 'Network universe (pre-GA, MBS-only connectivity)');
+
 runMoga = false;
 
 if not(runMoga)
     [bestInd, bestFit, history] = optimizeBaseStation( ...
         fbsAntenna, containsMbs, antennaObjectMbs, mbs_params, params);
+
+    % Push the final summary to whatever channels are enabled in
+    % .notify_local.json (gitignored). Silent no-op if not configured.
+    notify_results('GA run complete', ...
+        format_ga_summary(bestInd, bestFit, history, params));
 end
 
 % ---- Multi-objective GA (connectivity vs. power) ----

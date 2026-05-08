@@ -234,16 +234,39 @@ for gen = 1:params.numGenerations
                     fb, coordStr, powerVal, binaryVal, fbsBandLabel);
         end
 
-        for m = 1:numMbs
-            mbsFreqFlag = double(bestIndividual(6*params.numBS + m) >= 0.5);
-            if mbsFreqFlag == 0
-                mbsBandLabel = 'Coverage Band';
+        % Compact MBS / extras summary -- the per-entry list got noisy once
+        % we started appending forced-capacity femtos. Use verbose >= 2 to
+        % see the original line-per-MBS detail.
+        if numMbs > 0
+            mbsFlags = double(bestIndividual(6*params.numBS + (1:numMbs)) >= 0.5);
+            if isfield(params, 'mbsForcedCapacityMask') && ~isempty(params.mbsForcedCapacityMask)
+                forcedMask = logical(params.mbsForcedCapacityMask);
+                mbsFlags(forcedMask) = 1;
             else
-                mbsBandLabel = 'Capacity Band';
+                forcedMask = false(1, numMbs);
             end
-            fprintf('Best Individual (MBS %d): Band: %s\n', m, mbsBandLabel);
+            nForced = sum(forcedMask);
+            baseFlags = mbsFlags(~forcedMask);
+            if isempty(baseFlags)
+                baseSummary = 'none';
+            else
+                baseSummary = sprintf('%d cov / %d cap', sum(baseFlags == 0), sum(baseFlags == 1));
+            end
+            if nForced > 0
+                fprintf('MBS bands -> base: %s | extras: %d x capacity (forced)\n', ...
+                    baseSummary, nForced);
+            else
+                fprintf('MBS bands -> base: %s\n', baseSummary);
+            end
+            if params.verbose > 1
+                for mIdx = 1:numMbs
+                    if mbsFlags(mIdx) == 0, lbl = 'Coverage'; else, lbl = 'Capacity'; end
+                    if forcedMask(mIdx), tag = ' [forced]'; else, tag = ''; end
+                    fprintf('  MBS %d: %s%s\n', mIdx, lbl, tag);
+                end
+            end
         end
-        
+
         if params.verbose > 1
             fprintf('Fitness values:\n');
             disp(fitness');

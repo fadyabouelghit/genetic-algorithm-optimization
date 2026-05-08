@@ -32,9 +32,13 @@ function [extras, descr, fig] = femto_configs(modeName, varargin)
 %
 % INPUTS
 %   modeName : char/string. One of (case-insensitive):
-%                'coverage_fill_v1', 'residential_random_v1',
-%                'cell_edge_ring_v1', 'hex_lattice_v1',
+%                'coverage_fill_v1', 'coverage_fill_4kx3k_v1',
+%                'residential_random_v1', 'cell_edge_ring_v1',
+%                'per_mbs_edge_v1', 'hex_lattice_v1',
 %                'hotspot_clusters_v1', 'none'.
+%              Modes ending in '_4kx3k_v1' are tuned for the X-2-Z
+%              scenario (4000x3000 map, 2 MBSs); use them with
+%              expCode = '<x>-2-<z>'.
 %
 % NAME-VALUE OPTIONS
 %   'showFigure'  (logical, default false)
@@ -54,6 +58,10 @@ function [extras, descr, fig] = femto_configs(modeName, varargin)
 %   'femtosPerHotspot' (integer, default 5)
 %       Used by 'hotspot_clusters_v1': femtos per cluster. Total femto
 %       count for that mode is numHotspots * femtosPerHotspot.
+%   'femtosPerRing'    (integer, default 6)
+%       Used by 'per_mbs_edge_v1': femtos placed around each MBS.
+%   'ringRadius'       (double, default 700)
+%       Used by 'per_mbs_edge_v1': cell-edge radius [m] for each ring.
 %
 % OUTPUTS
 %   extras : 1×N struct array with fields x, y, height, power, antenna.
@@ -71,10 +79,17 @@ function [extras, descr, fig] = femto_configs(modeName, varargin)
     p.addRequired('modeName', @(x) ischar(x) || isstring(x));
     p.addParameter('showFigure', false, @(x) islogical(x) || isnumeric(x));
     p.addParameter('expCode',    '1-1-1', @(x) ischar(x) || isstring(x));
-    p.addParameter('fcCoverage', 2e9, @(x) isnumeric(x) && isscalar(x) && x > 0);
-    p.addParameter('fcCapacity', 2e9, @(x) isnumeric(x) && isscalar(x) && x > 0);
+    % Defaults sourced from band_frequencies so the femto antennas track
+    % whatever the FBS/MBS antennas are using. Override per-call only when
+    % you intentionally want a femto-only carrier (and remember that the
+    % band-id contract assumes same physical band per band id).
+    freqsDefault = band_frequencies();
+    p.addParameter('fcCoverage', freqsDefault.coverage, @(x) isnumeric(x) && isscalar(x) && x > 0);
+    p.addParameter('fcCapacity', freqsDefault.capacity, @(x) isnumeric(x) && isscalar(x) && x > 0);
     p.addParameter('numHotspots',      3, @(x) isnumeric(x) && isscalar(x) && x >= 1);
     p.addParameter('femtosPerHotspot', 5, @(x) isnumeric(x) && isscalar(x) && x >= 1);
+    p.addParameter('femtosPerRing',    6, @(x) isnumeric(x) && isscalar(x) && x >= 1);
+    p.addParameter('ringRadius',     700, @(x) isnumeric(x) && isscalar(x) && x > 0);
     p.parse(modeName, varargin{:});
     opt = p.Results;
 
@@ -177,6 +192,57 @@ function [extras, descr] = build_femto_extras(modeName, exp, defaultFemtoAnt, op
         end
 
         % -------------------------------------------------------------------
+        case 'coverage_fill_4kx3k_v1'
+        % -------------------------------------------------------------------
+        % Hand-placed dead-zone fill for the X-2-Z scenario:
+        %   4000x3000 map with 2 MBSs at (1000, 1000) and (3500, 2200).
+        % Targets the four map corners, the long bottom/top strips, and the
+        % weak-coverage band running diagonally between the two MBSs.
+        %
+        % Power: 0.25 W (24 dBm), Height: 5 m, Antenna: defaultFemtoAnt.
+        % Total: 18 femtos. Positions are clipped to the margin'd map so
+        % calling this with a smaller scenario won't push BSs off-grid.
+
+        descr = '18 outdoor femtos (5 m, 0.25 W) hand-placed for 4000x3000 / 2 MBS';
+
+        positions = [ ...
+            % --- Bottom strip (y < 400) ---
+             400,  250; ...   %  1: bottom-left corner
+            1000,  250; ...   %  2: bottom directly below MBS A
+            1700,  300; ...   %  3: bottom mid-left
+            2400,  300; ...   %  4: bottom mid-right
+            3100,  300; ...   %  5: bottom directly below MBS B
+            3800,  250; ...   %  6: bottom-right corner
+
+            % --- Side edges (mid-height) ---
+             200, 1500; ...   %  7: far-left mid
+            3800, 1100; ...   %  8: far-right lower
+             200, 2500; ...   %  9: far-left upper
+            3800, 2800; ...   % 10: top-right corner
+
+            % --- Top strip (y > 2700) ---
+            3000, 2900; ...   % 11: top right of MBS B
+            2200, 2800; ...   % 12: top mid-right
+            1400, 2800; ...   % 13: top mid-left
+             500, 2800; ...   % 14: top-left
+
+            % --- Diagonal in-fill between MBSs ---
+            2200, 1500; ...   % 15: centre fill
+            2400, 1100; ...   % 16: between-MBS lower
+            2700, 1700; ...   % 17: between-MBS upper
+             600, 1900];      % 18: upper-left in-fill
+
+        N = size(positions, 1);
+        extras = repmat(empty_extra(), 1, N);
+        for k = 1:N
+            extras(k).x       = max(exp.margin, min(exp.W - exp.margin, positions(k, 1)));
+            extras(k).y       = max(exp.margin, min(exp.H - exp.margin, positions(k, 2)));
+            extras(k).height  = 5;
+            extras(k).power   = 0.25;
+            extras(k).antenna = defaultFemtoAnt;
+        end
+
+        % -------------------------------------------------------------------
         case 'residential_random_v1'
         % -------------------------------------------------------------------
         % Stub: uniform random scatter of indoor residential HeNBs.
@@ -233,6 +299,50 @@ function [extras, descr] = build_femto_extras(modeName, exp, defaultFemtoAnt, op
             extras(k).power   = 0.25;
             extras(k).antenna = defaultFemtoAnt;
         end
+
+        % -------------------------------------------------------------------
+        case 'per_mbs_edge_v1'
+        % -------------------------------------------------------------------
+        % Cell-edge ring around EACH MBS (vs. cell_edge_ring_v1 which uses
+        % a single ring around the centroid). Generic across scenarios but
+        % especially useful for X-2-Z layouts where two MBSs sit far apart
+        % and a centroid-anchored ring lands in no-man's-land.
+        %
+        % Knobs:
+        %   'femtosPerRing' (default 6)
+        %   'ringRadius'    (default 700)  -- cell-edge radius [m]
+        % Total femtos = numMbs * femtosPerRing.
+        %
+        % Power: 0.25 W, Height: 5 m. Each femto is clamped inside the
+        % margin'd map.
+
+            N      = round(opt.femtosPerRing);
+            R      = opt.ringRadius;
+
+            if exp.numMbs == 1
+                [mxs, mys] = generate_hex_sites(exp.W, exp.H, exp.ISD, exp.margin, exp.numMbs);
+            else
+                mxs = exp.xs; mys = exp.ys;
+            end
+
+            descr = sprintf('%d MBS rings × %d femtos @ R=%.0f m (5 m, 0.25 W)', ...
+                            numel(mxs), N, R);
+
+            theta = linspace(0, 2*pi, N+1); theta(end) = [];
+            extras = repmat(empty_extra(), 1, numel(mxs) * N);
+            idx = 1;
+            for m = 1:numel(mxs)
+                for j = 1:N
+                    fx = mxs(m) + R * cos(theta(j));
+                    fy = mys(m) + R * sin(theta(j));
+                    extras(idx).x       = max(exp.margin, min(exp.W - exp.margin, fx));
+                    extras(idx).y       = max(exp.margin, min(exp.H - exp.margin, fy));
+                    extras(idx).height  = 5;
+                    extras(idx).power   = 0.25;
+                    extras(idx).antenna = defaultFemtoAnt;
+                    idx = idx + 1;
+                end
+            end
 
         % -------------------------------------------------------------------
         case 'hex_lattice_v1'
@@ -342,7 +452,7 @@ function [extras, descr] = build_femto_extras(modeName, exp, defaultFemtoAnt, op
         otherwise
         % -------------------------------------------------------------------
             error('femto_configs:unknownMode', ...
-                  'Unknown modeName = "%s". Valid: coverage_fill_v1, residential_random_v1, cell_edge_ring_v1, hex_lattice_v1, hotspot_clusters_v1, none.', ...
+                  'Unknown modeName = "%s". Valid: coverage_fill_v1, coverage_fill_4kx3k_v1, residential_random_v1, cell_edge_ring_v1, per_mbs_edge_v1, hex_lattice_v1, hotspot_clusters_v1, none.', ...
                   modeName);
     end
 end
