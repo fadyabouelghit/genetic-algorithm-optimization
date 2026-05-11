@@ -15,12 +15,15 @@ ppo_experiment.py
 ppo_experiment_example.ipynb
 ga_experiment.m
 ga_experiment_example.m
+ga_study.m
+ga_study_example.m
 plot_trajectories.py
 plot_trajectories_example.ipynb
 
 # Experiment harness outputs
 test_logs/
 ga_runs/
+ga_studies/
 ga_test_logs/
 ga_training_log.csv
 training_log.csv
