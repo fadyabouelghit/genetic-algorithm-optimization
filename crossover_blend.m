@@ -19,8 +19,8 @@ function [child1, child2, crossoverFlag] = crossover_blend(parent1, parent2, pro
     if nargin < 6 || isempty(controls)
         controls = struct();
     end
-    if ~isfield(controls, 'fbsBand'), controls.fbsBand = true; end
-    if ~isfield(controls, 'mbsBand'), controls.mbsBand = true; end
+    if ~isfield(controls, 'fbsBand'),     controls.fbsBand = true;     end
+    if ~isfield(controls, 'mbsCapacity'), controls.mbsCapacity = true; end
 
     if rand() < prob
         crossoverFlag = 1;
@@ -69,10 +69,12 @@ function [child1, child2, crossoverFlag] = crossover_blend(parent1, parent2, pro
             child2(idx) = clampToBounds(child2(idx), bounds(idx,:));
         end
 
-        % MBS frequency-flag suffix: same equal-or-randomize logic per gene.
-        % Skip the loop entirely when GA does not control MBS bands so the RNG
-        % stream matches the pre-feature behavior.
-        if controls.mbsBand
+        % MBS capacity-flag suffix: same equal-or-randomize logic per gene.
+        % For base MBSs this drives the capacity-band slot; for fixed sites
+        % it's sampled but ignored at evaluation. Skipped when the GA does
+        % not control MBS capacity so the RNG stream matches the toggle-off
+        % behaviour.
+        if controls.mbsCapacity
             for j = 1:n_mbs
                 mIdx = fbsCount + j;
                 p1g = round(parent1(mIdx));

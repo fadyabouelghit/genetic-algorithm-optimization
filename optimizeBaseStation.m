@@ -23,8 +23,9 @@ function [bestIndividual, bestFitness, history] = optimizeBaseStation(l, contain
     defaultParams.plotTrajectory = false;
     defaultParams.maxUsers = 1000;
     defaultParams.sinrThreshold = 5;
-    defaultParams.gaControlsFbsBand = true;   % false -> FBS freq flag held at 0 (coverage band)
-    defaultParams.gaControlsMbsBand = true;   % false -> MBS freq flag held at 0 (coverage band)
+    defaultParams.gaControlsFbsBand = true;       % false -> FBS freq flag held at 0 (coverage band)
+    defaultParams.gaControlsMbsCapacity = true;   % false -> every base MBS coverage-only (capacity slot off)
+    defaultParams.mbsBandPolicy = [];             % see optimize_base_station_ga.m for shape
     defaultParams.enableLogging = true;
     defaultParams.enablePerformancePlotting = false;
     defaultParams.logFile = '';
@@ -100,12 +101,14 @@ function headers = create_headers(n_fbs, n_mbs)
         headers{base+7} = sprintf('BS%d_fbsFreqFlag', bs);
     end
     for m = 1:n_mbs
-        headers{n_fbs*6 + 1 + m} = sprintf('MBS%d_FreqFlag', m);
+        % For base MBSs this gene drives the capacity-band slot on/off; for
+        % fixed-band sites (femtos) the gene is sampled but ignored at eval.
+        headers{n_fbs*6 + 1 + m} = sprintf('MBS%d_CapacityOn', m);
     end
 end
 
 
-bandControls = struct('fbsBand', params.gaControlsFbsBand, 'mbsBand', params.gaControlsMbsBand);
+bandControls = struct('fbsBand', params.gaControlsFbsBand, 'mbsCapacity', params.gaControlsMbsCapacity);
 
 population = initializePopulation_uniform(params.initialPopulationSize, params.bounds, params.numBS, numMbs, bandControls);
 
@@ -113,10 +116,8 @@ evalParams = params.fitnessWeights;
 evalParams.maxUsers = params.maxUsers;
 evalParams.sinrThreshold = params.sinrThreshold;
 evalParams.gaControlsFbsBand = params.gaControlsFbsBand;
-evalParams.gaControlsMbsBand = params.gaControlsMbsBand;
-if isfield(params, 'mbsForcedCapacityMask')
-    evalParams.mbsForcedCapacityMask = params.mbsForcedCapacityMask;
-end
+evalParams.gaControlsMbsCapacity = params.gaControlsMbsCapacity;
+evalParams.mbsBandPolicy = params.mbsBandPolicy;
 
 if params.initialPopulationSize > params.populationSize
     [initialFitness, ~] = evaluatePopulation(l, population, params.verbose, params.numBS, ...
@@ -181,7 +182,8 @@ for gen = 1:params.numGenerations
     evalParams.maxUsers = params.maxUsers;
     evalParams.sinrThreshold = params.sinrThreshold;
     evalParams.gaControlsFbsBand = params.gaControlsFbsBand;
-    evalParams.gaControlsMbsBand = params.gaControlsMbsBand;
+    evalParams.gaControlsMbsCapacity = params.gaControlsMbsCapacity;
+    evalParams.mbsBandPolicy = params.mbsBandPolicy;
     [fitness, evalDetails] = evaluatePopulation(l, population, params.verbose, params.numBS, params.spaceLimit ,containsMbs, mbs_params, antennaObjectMbs, params.bounds, params.mbsCache, targetIdx, evalParams);
     
     if trajectoryPlot.enabled
@@ -234,34 +236,50 @@ for gen = 1:params.numGenerations
                     fb, coordStr, powerVal, binaryVal, fbsBandLabel);
         end
 
-        % Compact MBS / extras summary -- the per-entry list got noisy once
-        % we started appending forced-capacity femtos. Use verbose >= 2 to
-        % see the original line-per-MBS detail.
+        % Compact MBS / extras summary. Base MBSs always run coverage; the
+        % per-MBS gene drives whether the capacity slot is on. Femto/fixed
+        % sites have their gene ignored -- they fire on their pinned band.
         if numMbs > 0
-            mbsFlags = double(bestIndividual(6*params.numBS + (1:numMbs)) >= 0.5);
-            if isfield(params, 'mbsForcedCapacityMask') && ~isempty(params.mbsForcedCapacityMask)
-                forcedMask = logical(params.mbsForcedCapacityMask);
-                mbsFlags(forcedMask) = 1;
+            mbsGenesBest = double(bestIndividual(6*params.numBS + (1:numMbs)) >= 0.5);
+            policy = params.mbsBandPolicy;
+            if isempty(policy)
+                isBase = true(1, numMbs);
+                fixedBand = zeros(1, numMbs);
             else
-                forcedMask = false(1, numMbs);
+                isBase = logical(reshape(policy.siteIsBaseMbs, 1, []));
+                fixedBand = double(reshape(policy.siteFixedBand, 1, []));
             end
-            nForced = sum(forcedMask);
-            baseFlags = mbsFlags(~forcedMask);
-            if isempty(baseFlags)
-                baseSummary = 'none';
+            nBase = sum(isBase);
+            nFixed = numMbs - nBase;
+            if nBase > 0
+                capOn = sum(mbsGenesBest(isBase) >= 0.5);
+                baseSummary = sprintf('%d/%d capacity slots on', capOn, nBase);
             else
-                baseSummary = sprintf('%d cov / %d cap', sum(baseFlags == 0), sum(baseFlags == 1));
+                baseSummary = 'no base MBSs';
             end
-            if nForced > 0
-                fprintf('MBS bands -> base: %s | extras: %d x capacity (forced)\n', ...
-                    baseSummary, nForced);
+            if nFixed > 0
+                fprintf('MBS bands -> base: %s | fixed: %d sites\n', ...
+                    baseSummary, nFixed);
             else
                 fprintf('MBS bands -> base: %s\n', baseSummary);
             end
             if params.verbose > 1
                 for mIdx = 1:numMbs
-                    if mbsFlags(mIdx) == 0, lbl = 'Coverage'; else, lbl = 'Capacity'; end
-                    if forcedMask(mIdx), tag = ' [forced]'; else, tag = ''; end
+                    if isBase(mIdx)
+                        if mbsGenesBest(mIdx) >= 0.5
+                            lbl = 'Coverage + Capacity';
+                        else
+                            lbl = 'Coverage only';
+                        end
+                        tag = '';
+                    else
+                        if fixedBand(mIdx) == 0
+                            lbl = 'Coverage (fixed)';
+                        else
+                            lbl = 'Capacity (fixed)';
+                        end
+                        tag = ' [femto/fixed]';
+                    end
                     fprintf('  MBS %d: %s%s\n', mIdx, lbl, tag);
                 end
             end
@@ -339,27 +357,35 @@ fbsAntennaEval = repmat(l(1), 1, params.numBS);
 if numel(l) >= 2
     fbsAntennaEval(fbsFreqFlags >= 0.5) = l(2);
 end
+
 if numMbs > 0
-    if params.gaControlsMbsBand
-        mbsFreqFlags = double(bestCore(fbsCount + (1:numMbs)) >= 0.5);
+    if params.gaControlsMbsCapacity
+        mbsCapacityGenes = double(bestCore(fbsCount + (1:numMbs)) >= 0.5);
     else
-        mbsFreqFlags = zeros(1, numMbs);
+        mbsCapacityGenes = zeros(1, numMbs);
     end
-    if isfield(params, 'mbsForcedCapacityMask') && ~isempty(params.mbsForcedCapacityMask)
-        mask = logical(params.mbsForcedCapacityMask);
-        if numel(mask) == numMbs
-            mbsFreqFlags(mask) = 1;
-        end
+    if isempty(params.mbsBandPolicy)
+        siteIsBaseMbsFinal = true(1, numMbs);
+        siteFixedBandFinal = zeros(1, numMbs);
+    else
+        siteIsBaseMbsFinal = logical(reshape(params.mbsBandPolicy.siteIsBaseMbs, 1, []));
+        siteFixedBandFinal = double(reshape(params.mbsBandPolicy.siteFixedBand, 1, []));
     end
+    [mbsSlotMapFinal, mbsSlotBandsFinal] = build_mbs_slots_final( ...
+        siteIsBaseMbsFinal, siteFixedBandFinal, mbsCapacityGenes);
+    % Per-base-MBS capacity flags (1×numBaseMbs) for downstream consumers.
+    mbsCapacityFlags = mbsCapacityGenes(siteIsBaseMbsFinal);
 else
-    mbsFreqFlags = zeros(1, 0);
+    mbsSlotMapFinal   = zeros(0, 3);
+    mbsSlotBandsFinal = zeros(1, 0);
+    mbsCapacityFlags  = zeros(1, 0);
 end
-bsBandIds = [fbsFreqFlags, mbsFreqFlags];
+bsBandIds = [fbsFreqFlags, mbsSlotBandsFinal];
 
     [~, ~, numUsers, transmittedPower, avg_rate_connected_bpsHz, fbsUsers, mbsUsers] = SINREvaluation( ...
         fbsAntennaEval, fbsBlock(5:blockSize:end), fbsBlock(1:blockSize:end), fbsBlock(2:blockSize:end), fbsBlock(3:blockSize:end), params.numBS, ...
         fbsBlock(4:blockSize:end), mbs_y, mbs_x, mbs_height, mbs_power, ...
-        0, params.spaceLimit(1), 0, params.spaceLimit(2), params.maxUsers, params.sinrThreshold, containsMbs, antennaObjectMbs, params.mbsCache, bsBandIds);
+        0, params.spaceLimit(1), 0, params.spaceLimit(2), params.maxUsers, params.sinrThreshold, containsMbs, antennaObjectMbs, params.mbsCache, bsBandIds, mbsSlotMapFinal);
 
 % Store raw physical metrics on history for callers to use
 history.rawMetrics = struct( ...
@@ -369,7 +395,7 @@ history.rawMetrics = struct( ...
     'transmittedPower',  transmittedPower, ...
     'avgRate',           avg_rate_connected_bpsHz, ...
     'fbsFreqFlags',      fbsFreqFlags, ...
-    'mbsFreqFlags',      mbsFreqFlags);
+    'mbsCapacityFlags',  mbsCapacityFlags);
 
 if params.verbose > 0
     fprintf('\n=== Optimization Complete ===\n');
@@ -399,7 +425,7 @@ if params.verbose > 0
         paramNames{base + 6} = sprintf('BS%d fbsFreqFlag', bs);
     end
     for m = 1:numMbs
-        paramNames{6*numBS + m} = sprintf('MBS%d FreqFlag', m);
+        paramNames{6*numBS + m} = sprintf('MBS%d CapacityOn', m);
     end
 
     disp(array2table(bestIndividual', ...
@@ -600,7 +626,7 @@ if params.enableLogging
         'totalPower', transmittedPower, ...
         'fbsPowers', formatFbsPowers(bestIndividual, params.numBS), ...
         'fbsFreqFlags', strjoin(string(fbsFreqFlags), ';'), ...
-        'mbsFreqFlags', strjoin(string(mbsFreqFlags), ';'), ...
+        'mbsCapacityFlags', strjoin(string(mbsCapacityFlags), ';'), ...
         'fbsConnected', fbsUsers, ...
         'mbsConnected', mbsUsers, ...
         'totalConnected', numUsers, ...
@@ -680,5 +706,32 @@ function appendRunLog(filename, logEntry)
         writetable(logTable, filename, 'WriteMode', 'append', 'WriteVariableNames', false);
     else
         writetable(logTable, filename);
+    end
+end
+
+function [slotMap, slotBands] = build_mbs_slots_final(siteIsBaseMbs, siteFixedBand, mbsGenes)
+% Mirror of build_mbs_slots in evaluatePopulation.m. Kept local because both
+% files need the same expansion and we don't want a third top-level helper
+% just for this.
+    numMbs = numel(siteIsBaseMbs);
+    rows = cell(1, numMbs);
+    bands = cell(1, numMbs);
+    for j = 1:numMbs
+        if siteIsBaseMbs(j)
+            rows{j} = [ j, 1, 1; ...
+                        j, 2, mbsGenes(j) ];
+            bands{j} = [0, 1];
+        else
+            bandIdx = siteFixedBand(j) + 1;
+            rows{j}  = [ j, bandIdx, 1 ];
+            bands{j} = siteFixedBand(j);
+        end
+    end
+    if isempty(rows)
+        slotMap   = zeros(0, 3);
+        slotBands = zeros(1, 0);
+    else
+        slotMap   = vertcat(rows{:});
+        slotBands = horzcat(bands{:});
     end
 end

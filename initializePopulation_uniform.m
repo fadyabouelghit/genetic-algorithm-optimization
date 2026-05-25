@@ -11,8 +11,8 @@ end
 if nargin < 5 || isempty(controls)
     controls = struct();
 end
-if ~isfield(controls, 'fbsBand'), controls.fbsBand = true; end
-if ~isfield(controls, 'mbsBand'), controls.mbsBand = true; end
+if ~isfield(controls, 'fbsBand'),     controls.fbsBand = true;     end
+if ~isfield(controls, 'mbsCapacity'), controls.mbsCapacity = true; end
 
 expectedParams = blockSize * n_fbs + n_mbs;
 if numParams ~= expectedParams
@@ -46,9 +46,11 @@ if ~controls.fbsBand
     end
 end
 
-% MBS frequency-flag suffix: one binary gene per MBS. Sample only if GA controls it;
-% otherwise leave at the pre-allocated 0 (no extra RNG consumed).
-if controls.mbsBand
+% MBS capacity-flag suffix: one binary gene per MBS site. For base MBSs the
+% gene drives the capacity-band slot; for fixed sites (femtos) it is
+% sampled but ignored at evaluation time. Skipped entirely when the GA does
+% not control MBS capacity, leaving the pre-allocated zeros in place.
+if controls.mbsCapacity
     for j = 1:n_mbs
         population(:, fbsCount + j) = randi([0 1], popSize, 1);
     end

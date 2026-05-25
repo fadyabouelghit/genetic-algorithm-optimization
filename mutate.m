@@ -11,8 +11,8 @@ function [mutated, mutationFlags] = mutate(individual, prob, bounds, mutationSca
     if n_mbs < 0
         error('mutate: chromosome shorter than 6*n_fbs (got %d, n_fbs=%d).', length(individual), n_fbs);
     end
-    if isfield(params, 'gaControlsFbsBand'), gaControlsFbsBand = params.gaControlsFbsBand; else, gaControlsFbsBand = true; end
-    if isfield(params, 'gaControlsMbsBand'), gaControlsMbsBand = params.gaControlsMbsBand; else, gaControlsMbsBand = true; end
+    if isfield(params, 'gaControlsFbsBand'),     gaControlsFbsBand     = params.gaControlsFbsBand;     else, gaControlsFbsBand     = true; end
+    if isfield(params, 'gaControlsMbsCapacity'), gaControlsMbsCapacity = params.gaControlsMbsCapacity; else, gaControlsMbsCapacity = true; end
     mutationFlags = false(size(individual));
 
     for bs = 1:n_fbs
@@ -66,10 +66,12 @@ function [mutated, mutationFlags] = mutate(individual, prob, bounds, mutationSca
 
     end
 
-    % MBS frequency-flag suffix: each gene is its own atomic block.
-    % Skip the loop entirely when GA does not control MBS bands so the RNG
-    % stream matches the pre-feature behavior.
-    if gaControlsMbsBand
+    % MBS capacity-flag suffix: each gene is its own atomic block.
+    % For base MBSs this drives the capacity slot on/off; for fixed sites
+    % the gene is bit-flipped but ignored at evaluation time. Skipped when
+    % the GA does not control MBS capacity so the RNG stream matches the
+    % toggle-off behaviour.
+    if gaControlsMbsCapacity
         for j = 1:n_mbs
             if rand() < prob
                 mbsIdx = fbsCount + j;

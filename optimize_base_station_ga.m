@@ -54,10 +54,19 @@ extraBs = [];
 numBaseMbs = size(mbs_params, 2);
 [mbs_params, antennaObjectMbs, containsMbs, numMbs] = ...
     append_fixed_bs(mbs_params, antennaObjectMbs, extraBs, mbsAntenna);
-% Extras are pinned to the capacity band (flag=1 -> antenna row 2),
-% regardless of params.gaControlsMbsBand. The corresponding chromosome
-% genes still exist but are ignored at evaluation time.
-mbsForcedCapacityMask = [false(1, numBaseMbs), true(1, numMbs - numBaseMbs)];
+
+% Per-site band policy.
+%   siteIsBaseMbs(j) == true  -> base MBS: coverage slot always on, capacity
+%                                slot toggled by the per-MBS GA gene.
+%   siteIsBaseMbs(j) == false -> fixed-band site (femto/extra): emits one
+%                                slot at siteFixedBand(j); the GA gene for
+%                                this slot is sampled but ignored at eval.
+% Femtos appended by append_fixed_bs are pinned to the capacity band
+% (band id 1, antenna row 2) -- same convention as the retired
+% mbsForcedCapacityMask.
+mbsBandPolicy = struct( ...
+    'siteIsBaseMbs', [true(1, numBaseMbs), false(1, numMbs - numBaseMbs)], ...
+    'siteFixedBand', [zeros(1, numBaseMbs), ones(1, numMbs - numBaseMbs)]);
 
 subset = struct('xmin', 0, 'xmax', W, ...
                 'ymin', 0, 'ymax', H);
@@ -92,8 +101,8 @@ params = struct(...
     'logFile', '', ...
     'numBS', numBS, ...
     'gaControlsFbsBand', false, ...   % false -> FBS frequency flag held at 0 (coverage band)
-    'gaControlsMbsBand', true, ...   % false -> MBS frequency flag held at 0 (coverage band)
-    'mbsForcedCapacityMask', mbsForcedCapacityMask, ...  % per-MBS pin to capacity band; overrides gaControlsMbsBand
+    'gaControlsMbsCapacity', true, ...  % false -> every base MBS coverage-only (capacity slot off)
+    'mbsBandPolicy', mbsBandPolicy, ...  % per-site descriptor: dual-band base vs single-band fixed
     'bounds', [repmat([0 W; 0 H; 20 150; 7 10.5; 0 1; 0 1], numBS, 1); repmat([0 1], numMbs, 1)], ...
     'spaceLimit', [W,H], ...
     'mbsCache', cache, ...
@@ -104,12 +113,26 @@ params = struct(...
 % ---------- Visualize the network universe (pre-GA) ----------
 % Run an MBS-only SINR pass to flag users already covered by the macro
 % layer; FBSs haven't been placed yet so we feed no_fbs=0.
-mbsBandFlagsPreGa = double(mbsForcedCapacityMask);
+% Pre-GA default: base MBSs run coverage-only (capacity slots OFF, since the
+% GA hasn't decided yet); fixed sites fire on their pinned band.
+preGaCapacityGenes = zeros(1, numMbs);
+preGaSlotMap = zeros(0, 3);
+preGaSlotBands = zeros(1, 0);
+for j = 1:numMbs
+    if mbsBandPolicy.siteIsBaseMbs(j)
+        preGaSlotMap   = [preGaSlotMap;   j, 1, 1; j, 2, preGaCapacityGenes(j)]; %#ok<AGROW>
+        preGaSlotBands = [preGaSlotBands, 0, 1]; %#ok<AGROW>
+    else
+        bandIdx = mbsBandPolicy.siteFixedBand(j) + 1;
+        preGaSlotMap   = [preGaSlotMap;   j, bandIdx, 1]; %#ok<AGROW>
+        preGaSlotBands = [preGaSlotBands, mbsBandPolicy.siteFixedBand(j)]; %#ok<AGROW>
+    end
+end
 [preGaUserPositions, preGaUsersTbl] = SINREvaluation( ...
     [], [], [], [], [], 0, [], ...
     [], [], [], [], ...
     0, W, 0, H, params.maxUsers, params.sinrThreshold, ...
-    containsMbs, antennaObjectMbs, cache, mbsBandFlagsPreGa);
+    containsMbs, antennaObjectMbs, cache, preGaSlotBands, preGaSlotMap);
 
 plot_network_universe(mbs_params, numBaseMbs, W, H, params.maxUsers, ...
     'UserPositions', preGaUserPositions, ...

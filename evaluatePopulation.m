@@ -16,8 +16,8 @@ function [fitness, details] = evaluatePopulation(l, population, verbose, n_fbs, 
     if ~isfield(weightParams, 'maxUsers'), weightParams.maxUsers = 1000; end
     if ~isfield(weightParams, 'sinrThreshold'), weightParams.sinrThreshold = 5; end
     if ~isfield(weightParams, 'gaControlsFbsBand'), weightParams.gaControlsFbsBand = true; end
-    if ~isfield(weightParams, 'gaControlsMbsBand'), weightParams.gaControlsMbsBand = true; end
-    if ~isfield(weightParams, 'mbsForcedCapacityMask'), weightParams.mbsForcedCapacityMask = []; end
+    if ~isfield(weightParams, 'gaControlsMbsCapacity'), weightParams.gaControlsMbsCapacity = true; end
+    if ~isfield(weightParams, 'mbsBandPolicy'), weightParams.mbsBandPolicy = []; end
     beta = weightParams.beta;
     gamma = weightParams.gamma;
     epsilon = weightParams.epsilon;
@@ -26,7 +26,8 @@ function [fitness, details] = evaluatePopulation(l, population, verbose, n_fbs, 
     maxUsers = weightParams.maxUsers;
     sinrThreshold = weightParams.sinrThreshold;
     gaControlsFbsBand = weightParams.gaControlsFbsBand;
-    gaControlsMbsBand = weightParams.gaControlsMbsBand;
+    gaControlsMbsCapacity = weightParams.gaControlsMbsCapacity;
+    mbsBandPolicy = weightParams.mbsBandPolicy;
 
     fitness = zeros(size(population,1), 1);
     numIndividuals = size(population,1);
@@ -49,6 +50,23 @@ function [fitness, details] = evaluatePopulation(l, population, verbose, n_fbs, 
     numMbs = containsMbs * size(mbs_params, 2);
     fbsCount = blockSize * n_fbs;
     expectedLen = fbsCount + numMbs;
+
+    % Resolve MBS band policy. When no policy is supplied, treat every MBS
+    % site as a "base" MBS (dual-band, GA-gated capacity). Femtos only show
+    % up when the caller supplies the policy explicitly.
+    if isempty(mbsBandPolicy)
+        siteIsBaseMbs = true(1, numMbs);
+        siteFixedBand = zeros(1, numMbs);
+    else
+        siteIsBaseMbs = logical(reshape(mbsBandPolicy.siteIsBaseMbs, 1, []));
+        siteFixedBand = double(reshape(mbsBandPolicy.siteFixedBand, 1, []));
+        assert(numel(siteIsBaseMbs) == numMbs, ...
+            'mbsBandPolicy.siteIsBaseMbs must have %d entries (got %d).', ...
+            numMbs, numel(siteIsBaseMbs));
+        assert(numel(siteFixedBand) == numMbs, ...
+            'mbsBandPolicy.siteFixedBand must have %d entries (got %d).', ...
+            numMbs, numel(siteFixedBand));
+    end
 
     for i = 1:size(population,1)
         ind = population(i,:);
@@ -75,26 +93,21 @@ function [fitness, details] = evaluatePopulation(l, population, verbose, n_fbs, 
         end
 
         if numMbs > 0
-            if gaControlsMbsBand
-                mbsFreqFlags = double(ind(fbsCount + (1:numMbs)) >= 0.5);
-            else
-                mbsFreqFlags = zeros(1, numMbs);
+            mbsGenes = double(ind(fbsCount + (1:numMbs)) >= 0.5);
+            if ~gaControlsMbsCapacity
+                mbsGenes(:) = 0;
             end
-            if ~isempty(weightParams.mbsForcedCapacityMask)
-                mask = logical(weightParams.mbsForcedCapacityMask);
-                if numel(mask) == numMbs
-                    mbsFreqFlags(mask) = 1;
-                end
-            end
+            [mbsSlotMap, mbsSlotBands] = build_mbs_slots(siteIsBaseMbs, siteFixedBand, mbsGenes);
         else
-            mbsFreqFlags = zeros(1, 0);
+            mbsSlotMap   = zeros(0, 3);
+            mbsSlotBands = zeros(1, 0);
         end
-        bsBandIds = [fbsFreqFlags, mbsFreqFlags];
+        bsBandIds = [fbsFreqFlags, mbsSlotBands];
 
-        [~, ~, numUsers, transmittedPower, avg_rate_connected_bpsHz, fbsUsers, mbsUsers] = SINREvaluation(fbsAntennaEval, power_status, ...
+        [~, ~, numUsers, transmittedPower, avg_rate_connected_bpsHz, fbsUsers, mbsUsers, sum_rate_connected_bpsHz] = SINREvaluation(fbsAntennaEval, power_status, ...
             x, y, z, n_fbs, power, ...
             mbs_y, mbs_x, mbs_height, mbs_power, ...
-            0, spaceLimit(1), 0, spaceLimit(2), maxUsers, sinrThreshold, containsMbs, antennaObjectMbs, mbsCache, bsBandIds);
+            0, spaceLimit(1), 0, spaceLimit(2), maxUsers, sinrThreshold, containsMbs, antennaObjectMbs, mbsCache, bsBandIds, mbsSlotMap);
 
         details.numUsers(i) = numUsers;
         details.transmittedPower(i) = transmittedPower;
@@ -121,8 +134,39 @@ function [fitness, details] = evaluatePopulation(l, population, verbose, n_fbs, 
             fitness(i) = (1 - fbsWeight) * base + fbsWeight * fbsTerm;
         
         elseif targetIdx == 2
-            fitness(i) = avg_rate_connected_bpsHz;
-        
+            fitness(i) = sum_rate_connected_bpsHz;
+
         end
+    end
+end
+
+function [slotMap, slotBands] = build_mbs_slots(siteIsBaseMbs, siteFixedBand, mbsGenes)
+% Expand MBS sites into per-band slots.
+%   - Base MBS site j -> two slots: [j, 1 (cov), 1 always-on] and
+%     [j, 2 (cap), mbsGenes(j) (capacity gated by GA gene)].
+%   - Fixed (femto) site j -> one slot: [j, siteFixedBand(j)+1, 1].
+% slotBands is the band-id vector (0/1) that lines up with the slot rows
+% and is appended to bsBandIds for same-band interference accounting.
+
+    numMbs = numel(siteIsBaseMbs);
+    rows = cell(1, numMbs);
+    bands = cell(1, numMbs);
+    for j = 1:numMbs
+        if siteIsBaseMbs(j)
+            rows{j} = [ j, 1, 1; ...
+                        j, 2, mbsGenes(j) ];
+            bands{j} = [0, 1];
+        else
+            bandIdx = siteFixedBand(j) + 1;
+            rows{j}  = [ j, bandIdx, 1 ];
+            bands{j} = siteFixedBand(j);
+        end
+    end
+    if isempty(rows)
+        slotMap   = zeros(0, 3);
+        slotBands = zeros(1, 0);
+    else
+        slotMap   = vertcat(rows{:});
+        slotBands = horzcat(bands{:});
     end
 end
