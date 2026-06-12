@@ -29,7 +29,25 @@ function [bestIndividual, bestFitness, history] = optimizeBaseStation(l, contain
     defaultParams.enableLogging = true;
     defaultParams.enablePerformancePlotting = false;
     defaultParams.logFile = '';
+    defaultParams.randomizeGA = false;  % true -> rng('shuffle'): independent runs
+    defaultParams.gaSeed = 43;          % used when randomizeGA = false (reproducible)
     params = mergeParams(defaultParams, params);
+
+    % --- RNG control (GA operators + initial population) -----------------
+    % User positions are NOT affected: SINREvaluation generates them from a
+    % dedicated local RandStream with a fixed seed, regardless of this toggle.
+    if params.randomizeGA
+        rng('shuffle');
+    else
+        rng(params.gaSeed);
+    end
+    rngInfo = rng;  % current settings (rng(...) returns the *previous* state)
+    % Legacy flag: when false (fixed mode), SINREvaluation resets the GLOBAL
+    % stream with rng(0) per evaluation — exactly the historical behavior, so
+    % old logged runs are reproduced bit-for-bit. When true (randomized mode),
+    % user positions come from an isolated local stream and the global stream
+    % is never touched, so every run is truly independent.
+    setappdata(0, 'GA_LEGACY_USER_RNG', ~params.randomizeGA);
 if isempty(params.initialPopulationSize)
     params.initialPopulationSize = params.populationSize;
 end
@@ -82,6 +100,11 @@ if params.verbose > 0
     fprintf('\n=== Genetic Algorithm Optimization ===\n');
     fprintf('Population: %d, Generations: %d\n', params.populationSize, params.numGenerations);
     fprintf('Crossover: %.1f%%, Mutation: %.1f%%\n', params.crossoverProb*100, params.mutationProb*100);
+    if params.randomizeGA
+        fprintf('RNG: randomized (shuffled seed=%u)\n', rngInfo.Seed);
+    else
+        fprintf('RNG: fixed (seed=%u)\n', rngInfo.Seed);
+    end
     disp('Initializing population...');
 end
 

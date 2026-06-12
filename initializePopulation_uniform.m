@@ -1,6 +1,7 @@
 function population = initializePopulation_uniform(popSize, bounds, n_fbs, n_mbs, controls)
 
-rng(43);
+% NOTE: no rng() here — seeding is owned by the caller (optimizeBaseStation /
+% optimizeBaseStationMoga) via params.randomizeGA / params.gaSeed.
 numParams = size(bounds,1);
 population = zeros(popSize, numParams);
 blockSize = 6;
