@@ -18,6 +18,10 @@ function [fitness, details] = evaluatePopulation(l, population, verbose, n_fbs, 
     if ~isfield(weightParams, 'gaControlsFbsBand'), weightParams.gaControlsFbsBand = true; end
     if ~isfield(weightParams, 'gaControlsMbsCapacity'), weightParams.gaControlsMbsCapacity = true; end
     if ~isfield(weightParams, 'mbsBandPolicy'), weightParams.mbsBandPolicy = []; end
+    % Toggle: when true, the power term also charges for each macro capacity
+    % carrier the GA switches on (20 W each). When false, only FBS power is
+    % charged -> the original FBS-only cost.
+    if ~isfield(weightParams, 'powerIncludesMacroCapacity'), weightParams.powerIncludesMacroCapacity = true; end
     beta = weightParams.beta;
     gamma = weightParams.gamma;
     epsilon = weightParams.epsilon;
@@ -28,6 +32,7 @@ function [fitness, details] = evaluatePopulation(l, population, verbose, n_fbs, 
     gaControlsFbsBand = weightParams.gaControlsFbsBand;
     gaControlsMbsCapacity = weightParams.gaControlsMbsCapacity;
     mbsBandPolicy = weightParams.mbsBandPolicy;
+    powerIncludesMacroCapacity = weightParams.powerIncludesMacroCapacity;
 
     fitness = zeros(size(population,1), 1);
     numIndividuals = size(population,1);
@@ -37,7 +42,11 @@ function [fitness, details] = evaluatePopulation(l, population, verbose, n_fbs, 
         'avgRate', zeros(numIndividuals, 1), ...
         'fbsUsers', zeros(numIndividuals, 1), ...
         'mbsUsers', zeros(numIndividuals, 1), ...
-        'activeFbs', zeros(numIndividuals, 1));
+        'mbsCoverageUsers', zeros(numIndividuals, 1), ...
+        'mbsCapacityUsers', zeros(numIndividuals, 1), ...
+        'activeFbs', zeros(numIndividuals, 1), ...
+        'controlledPower', zeros(numIndividuals, 1), ...
+        'numActiveCapacityCarriers', zeros(numIndividuals, 1));
 
     fbsBoundRows = bounds(1:6*n_fbs, :);
     powerBounds = fbsBoundRows(4:6:end, :);
@@ -68,6 +77,17 @@ function [fitness, details] = evaluatePopulation(l, population, verbose, n_fbs, 
             numMbs, numel(siteFixedBand));
     end
 
+    % Max controllable power: every FBS at its upper bound + (if toggled on)
+    % every base-macro capacity carrier switched on (20 W each).
+    baseMbsPowerTotal = 0;
+    if powerIncludesMacroCapacity && numMbs > 0
+        baseMbsPowerTotal = sum(mbs_power(siteIsBaseMbs));
+    end
+    maxPowerTotal = maxPower + baseMbsPowerTotal;
+    if maxPowerTotal <= 0
+        maxPowerTotal = 1;
+    end
+
     for i = 1:size(population,1)
         ind = population(i,:);
         if numel(ind) ~= expectedLen
@@ -80,6 +100,7 @@ function [fitness, details] = evaluatePopulation(l, population, verbose, n_fbs, 
         z = fbsBlock(3:blockSize:end);
         power = fbsBlock(4:blockSize:end);
         power_status = fbsBlock(5:blockSize:end);
+        activeFbsPower = sum(power(power_status >= 0.5));
         if gaControlsFbsBand
             fbsFreqFlags = double(fbsBlock(6:blockSize:end) >= 0.5);
         else
@@ -92,10 +113,17 @@ function [fitness, details] = evaluatePopulation(l, population, verbose, n_fbs, 
             fbsAntennaEval(capMask) = l(2);
         end
 
+        macroCapPower        = 0;
+        numActiveCapCarriers = 0;
         if numMbs > 0
             mbsGenes = double(ind(fbsCount + (1:numMbs)) >= 0.5);
             if ~gaControlsMbsCapacity
                 mbsGenes(:) = 0;
+            end
+            activeBaseCap        = siteIsBaseMbs & (mbsGenes >= 0.5);   % base macros only
+            numActiveCapCarriers = sum(activeBaseCap);
+            if powerIncludesMacroCapacity
+                macroCapPower = sum(mbs_power(activeBaseCap));
             end
             [mbsSlotMap, mbsSlotBands] = build_mbs_slots(siteIsBaseMbs, siteFixedBand, mbsGenes);
         else
@@ -104,7 +132,7 @@ function [fitness, details] = evaluatePopulation(l, population, verbose, n_fbs, 
         end
         bsBandIds = [fbsFreqFlags, mbsSlotBands];
 
-        [~, ~, numUsers, transmittedPower, avg_rate_connected_bpsHz, fbsUsers, mbsUsers, sum_rate_connected_bpsHz] = SINREvaluation(fbsAntennaEval, power_status, ...
+        [~, ~, numUsers, transmittedPower, avg_rate_connected_bpsHz, fbsUsers, mbsUsers, sum_rate_connected_bpsHz, mbsCoverageUsers, mbsCapacityUsers] = SINREvaluation(fbsAntennaEval, power_status, ...
             x, y, z, n_fbs, power, ...
             mbs_y, mbs_x, mbs_height, mbs_power, ...
             0, spaceLimit(1), 0, spaceLimit(2), maxUsers, sinrThreshold, containsMbs, antennaObjectMbs, mbsCache, bsBandIds, mbsSlotMap);
@@ -114,16 +142,18 @@ function [fitness, details] = evaluatePopulation(l, population, verbose, n_fbs, 
         details.avgRate(i) = avg_rate_connected_bpsHz;
         details.fbsUsers(i) = fbsUsers;
         details.mbsUsers(i) = mbsUsers;
+        details.mbsCoverageUsers(i) = mbsCoverageUsers;
+        details.mbsCapacityUsers(i) = mbsCapacityUsers;
         details.activeFbs(i) = sum(power_status >= 0.5);
+
+        controlledPower = activeFbsPower + macroCapPower;
+        details.controlledPower(i) = controlledPower;
+        details.numActiveCapacityCarriers(i) = numActiveCapCarriers;
 
         if targetIdx == 1
             norm_numUsers = numUsers / maxUsers;
             norm_numUsers = min(max(norm_numUsers, 0), 1);
-            powerRange = maxPower - minPower;
-            if powerRange <= 0
-                powerRange = 1;
-            end
-            norm_power = (transmittedPower - minPower) / powerRange;
+            norm_power = controlledPower / maxPowerTotal;
             norm_power = min(max(norm_power, 0), 1);
 
             base = (norm_numUsers ^ beta) * ((1 - norm_power) ^ gamma);

@@ -1,4 +1,4 @@
-function [user_positions, df_users_table, total_connected_users, total_transmitted_pwr, avg_rate_connected_bpsHz, fbs_connected_users, mbs_connected_users, sum_rate_connected_bpsHz] = SINREvaluation(antenna_object, power_status, tx_x, tx_y, tx_height, no_fbs, tx_power, mbs_x, mbs_y, mbs_height, mbs_power, subset_x_min, subset_x_max, subset_y_min, subset_y_max, num_users, threshold, containsMbs, antennaObjectMbs, mbsCache, bsBandIds, mbsSlotMap)
+function [user_positions, df_users_table, total_connected_users, total_transmitted_pwr, avg_rate_connected_bpsHz, fbs_connected_users, mbs_connected_users, sum_rate_connected_bpsHz, mbs_coverage_connected, mbs_capacity_connected] = SINREvaluation(antenna_object, power_status, tx_x, tx_y, tx_height, no_fbs, tx_power, mbs_x, mbs_y, mbs_height, mbs_power, subset_x_min, subset_x_max, subset_y_min, subset_y_max, num_users, threshold, containsMbs, antennaObjectMbs, mbsCache, bsBandIds, mbsSlotMap)
 % SINREVALUATION Computes the SINR values for users based on FBS and optional MBS parameters.
 %
 %   INPUTS:
@@ -37,6 +37,12 @@ function [user_positions, df_users_table, total_connected_users, total_transmitt
 %     df_users_table         : Table with power values and SINRs per BS
 %     total_connected_users  : Total number of connected users (SINR ≥ threshold)
 %     total_transmitted_pwr  : Sum of transmission power of all active FBSs
+%     ...
+%     mbs_coverage_connected : Connected users served by an MBS coverage-band
+%                              slot (mbsSlotMap bandIdx 1)
+%     mbs_capacity_connected : Connected users served by an MBS capacity-band
+%                              slot (mbsSlotMap bandIdx 2)
+%                              Invariant: fbs + coverage + capacity == total.
 
     if iscell(mbsCache)
         if isempty(mbsCache)
@@ -92,6 +98,25 @@ function [user_positions, df_users_table, total_connected_users, total_transmitt
     total_connected_users = sum(df_users_table.is_connected);
     fbs_connected_users = sum(df_users_table.is_connected & df_users_table.FBS_connection_index >= 1 & df_users_table.FBS_connection_index <= no_fbs);
     mbs_connected_users = total_connected_users - fbs_connected_users;
+
+    % Per-tier MBS split: map each MBS-connected user's serving slot column
+    % through mbsSlotMap (bandIdx 1 = coverage, 2 = capacity).
+    mbsConnMask = df_users_table.is_connected & df_users_table.FBS_connection_index > num_fbs_scalar;
+    connSlotIdx = df_users_table.FBS_connection_index(mbsConnMask) - num_fbs_scalar;
+    if isempty(connSlotIdx)
+        mbs_coverage_connected = 0;
+        mbs_capacity_connected = 0;
+    else
+        slotBandIdx = mbsSlotMap(connSlotIdx, 2);
+        mbs_coverage_connected = sum(slotBandIdx == 1);
+        mbs_capacity_connected = sum(slotBandIdx == 2);
+    end
+    if fbs_connected_users + mbs_coverage_connected + mbs_capacity_connected ~= total_connected_users
+        warning('SINREvaluation:tierSplitMismatch', ...
+            'Tier split fbs=%d + coverage=%d + capacity=%d ~= total connected %d.', ...
+            fbs_connected_users, mbs_coverage_connected, mbs_capacity_connected, total_connected_users);
+    end
+
     % total_transmitted_pwr = sum(tx_power .* power_status);
     total_transmitted_pwr = sum(tx_power);
 end

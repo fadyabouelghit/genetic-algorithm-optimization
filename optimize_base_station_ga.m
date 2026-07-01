@@ -108,8 +108,9 @@ params = struct(...
     'mbsCache', cache, ...
     'verbose', 1, ...
     'targetIdx', 1, ...  % 1 -> connectivity, 2 -> avg sum rate
-    'randomizeGA', false, ...  % true -> shuffle GA RNG each run (init pop + operators); user map stays fixed
-    'gaSeed', 43 ...           % seed used when randomizeGA = false (reproducible runs)
+    'randomizeGA', false, ...  % true -> randomize GA RNG (init pop + operators); user map stays fixed
+    'gaSeed', [] ...           % [] -> 43 in legacy mode, shuffle in randomized mode; a number with randomizeGA=true -> reproducible random run
+);
 );
 
 % ---------- Visualize the network universe (pre-GA) ----------

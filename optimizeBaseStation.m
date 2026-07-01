@@ -26,20 +26,39 @@ function [bestIndividual, bestFitness, history] = optimizeBaseStation(l, contain
     defaultParams.gaControlsFbsBand = true;       % false -> FBS freq flag held at 0 (coverage band)
     defaultParams.gaControlsMbsCapacity = true;   % false -> every base MBS coverage-only (capacity slot off)
     defaultParams.mbsBandPolicy = [];             % see optimize_base_station_ga.m for shape
+    defaultParams.powerIncludesMacroCapacity = true;  % false -> FBS-only power cost (no macro capacity charge)
     defaultParams.enableLogging = true;
     defaultParams.enablePerformancePlotting = false;
     defaultParams.logFile = '';
-    defaultParams.randomizeGA = false;  % true -> rng('shuffle'): independent runs
-    defaultParams.gaSeed = 43;          % used when randomizeGA = false (reproducible)
+    defaultParams.randomizeGA = false;  % see RNG control block below
+    defaultParams.gaSeed = [];          % [] -> 43 in legacy mode, shuffle in randomized mode
     params = mergeParams(defaultParams, params);
 
     % --- RNG control (GA operators + initial population) -----------------
     % User positions are NOT affected: SINREvaluation generates them from a
     % dedicated local RandStream with a fixed seed, regardless of this toggle.
+    % Three modes:
+    %   randomizeGA=false            -> legacy: rng(gaSeed, default 43) AND
+    %                                   global rng(0) reset per evaluation
+    %                                   (reproduces old logged runs bit-exact).
+    %   randomizeGA=true, gaSeed=[]  -> rng('shuffle'): independent runs.
+    %   randomizeGA=true, gaSeed=N   -> rng(N) with the isolated user RNG:
+    %                                   reproducible-yet-fully-random runs
+    %                                   (same seed = identical run; different
+    %                                   seeds = independent runs). Enables
+    %                                   same-seed paired ablations.
     if params.randomizeGA
-        rng('shuffle');
+        if isempty(params.gaSeed)
+            rng('shuffle');
+        else
+            rng(params.gaSeed);
+        end
     else
-        rng(params.gaSeed);
+        if isempty(params.gaSeed)
+            rng(43);
+        else
+            rng(params.gaSeed);
+        end
     end
     rngInfo = rng;  % current settings (rng(...) returns the *previous* state)
     % Legacy flag: when false (fixed mode), SINREvaluation resets the GLOBAL
@@ -101,9 +120,13 @@ if params.verbose > 0
     fprintf('Population: %d, Generations: %d\n', params.populationSize, params.numGenerations);
     fprintf('Crossover: %.1f%%, Mutation: %.1f%%\n', params.crossoverProb*100, params.mutationProb*100);
     if params.randomizeGA
-        fprintf('RNG: randomized (shuffled seed=%u)\n', rngInfo.Seed);
+        if isempty(params.gaSeed)
+            fprintf('RNG: randomized (shuffled seed=%u)\n', rngInfo.Seed);
+        else
+            fprintf('RNG: randomized, seed-controlled (seed=%u)\n', rngInfo.Seed);
+        end
     else
-        fprintf('RNG: fixed (seed=%u)\n', rngInfo.Seed);
+        fprintf('RNG: fixed/legacy (seed=%u)\n', rngInfo.Seed);
     end
     disp('Initializing population...');
 end
@@ -141,6 +164,7 @@ evalParams.sinrThreshold = params.sinrThreshold;
 evalParams.gaControlsFbsBand = params.gaControlsFbsBand;
 evalParams.gaControlsMbsCapacity = params.gaControlsMbsCapacity;
 evalParams.mbsBandPolicy = params.mbsBandPolicy;
+evalParams.powerIncludesMacroCapacity = params.powerIncludesMacroCapacity;
 
 if params.initialPopulationSize > params.populationSize
     [initialFitness, ~] = evaluatePopulation(l, population, params.verbose, params.numBS, ...
@@ -207,6 +231,7 @@ for gen = 1:params.numGenerations
     evalParams.gaControlsFbsBand = params.gaControlsFbsBand;
     evalParams.gaControlsMbsCapacity = params.gaControlsMbsCapacity;
     evalParams.mbsBandPolicy = params.mbsBandPolicy;
+    evalParams.powerIncludesMacroCapacity = params.powerIncludesMacroCapacity;
     [fitness, evalDetails] = evaluatePopulation(l, population, params.verbose, params.numBS, params.spaceLimit ,containsMbs, mbs_params, antennaObjectMbs, params.bounds, params.mbsCache, targetIdx, evalParams);
     
     if trajectoryPlot.enabled
@@ -405,17 +430,32 @@ else
 end
 bsBandIds = [fbsFreqFlags, mbsSlotBandsFinal];
 
-    [~, ~, numUsers, transmittedPower, avg_rate_connected_bpsHz, fbsUsers, mbsUsers] = SINREvaluation( ...
+    [~, ~, numUsers, transmittedPower, avg_rate_connected_bpsHz, fbsUsers, mbsUsers, ~, mbsCoverageUsers, mbsCapacityUsers] = SINREvaluation( ...
         fbsAntennaEval, fbsBlock(5:blockSize:end), fbsBlock(1:blockSize:end), fbsBlock(2:blockSize:end), fbsBlock(3:blockSize:end), params.numBS, ...
         fbsBlock(4:blockSize:end), mbs_y, mbs_x, mbs_height, mbs_power, ...
         0, params.spaceLimit(1), 0, params.spaceLimit(2), params.maxUsers, params.sinrThreshold, containsMbs, antennaObjectMbs, params.mbsCache, bsBandIds, mbsSlotMapFinal);
+
+% Final controllable power (active FBS power + activated macro capacity
+% carriers, 20 W each when the toggle is on) -- mirrors the cost's power term
+% in evaluatePopulation so the reported number matches what fed the fitness.
+finalActiveFbsPower = sum(fbsBlock(4:blockSize:end) .* (fbsBlock(5:blockSize:end) >= 0.5));
+finalMacroCapPower = 0;
+if numMbs > 0 && params.powerIncludesMacroCapacity
+    finalMacroCapPower = sum(mbs_power(siteIsBaseMbsFinal) .* mbsCapacityFlags);
+end
+finalControlledPower      = finalActiveFbsPower + finalMacroCapPower;
+finalNumActiveCapCarriers = sum(mbsCapacityFlags >= 0.5);
 
 % Store raw physical metrics on history for callers to use
 history.rawMetrics = struct( ...
     'numUsers',          numUsers, ...
     'fbsUsers',          fbsUsers, ...
     'mbsUsers',          mbsUsers, ...
+    'mbsCoverageUsers',  mbsCoverageUsers, ...
+    'mbsCapacityUsers',  mbsCapacityUsers, ...
     'transmittedPower',  transmittedPower, ...
+    'controlledPower',           finalControlledPower, ...
+    'numActiveCapacityCarriers', finalNumActiveCapCarriers, ...
     'avgRate',           avg_rate_connected_bpsHz, ...
     'fbsFreqFlags',      fbsFreqFlags, ...
     'mbsCapacityFlags',  mbsCapacityFlags);
@@ -428,7 +468,8 @@ if params.verbose > 0
     fprintf('The best individual performance: \n') 
     fprintf('Total Connected Users: %d\n', numUsers);
     fprintf(' - FBS-connected Users: %d\n', fbsUsers);
-    fprintf(' - MBS-connected Users: %d\n', mbsUsers);
+    fprintf(' - MBS-connected Users: %d (coverage: %d, capacity: %d)\n', ...
+        mbsUsers, mbsCoverageUsers, mbsCapacityUsers);
     fprintf('Total Transmitted Power: %.2f W\n', transmittedPower);
     fprintf('Avg. Sum Rate: %.2f bps/Hz\n', avg_rate_connected_bpsHz);
 
@@ -652,6 +693,8 @@ if params.enableLogging
         'mbsCapacityFlags', strjoin(string(mbsCapacityFlags), ';'), ...
         'fbsConnected', fbsUsers, ...
         'mbsConnected', mbsUsers, ...
+        'mbsCoverageConnected', mbsCoverageUsers, ...
+        'mbsCapacityConnected', mbsCapacityUsers, ...
         'totalConnected', numUsers, ...
         'avgRate', avg_rate_connected_bpsHz);
     appendRunLog(params.logFile, logEntry);
