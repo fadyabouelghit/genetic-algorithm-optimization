@@ -1,0 +1,34 @@
+{
+  "_README": [
+    "Copy this file to .notify_local.json (same directory) and edit your",
+    "settings. The .notify_local.json file is gitignored so neither",
+    "destinations nor any other personal info ends up in the repo.",
+    "",
+    "ntfy:",
+    "  Free push notifications. Pick a long, hard-to-guess topic string",
+    "  (anyone who knows it can read messages). Install the ntfy app on",
+    "  your phone, open it, tap +, and subscribe to the same topic.",
+    "",
+    "email:",
+    "  Uses MATLAB's sendmail. The SMTP password is NOT stored here -- run",
+    "  these once interactively (outside this repo, e.g. in your MATLAB",
+    "  startup file in ~):",
+    "    setpref('Internet', 'SMTP_Username', 'you@gmail.com');",
+    "    setpref('Internet', 'SMTP_Password', 'your-app-password');",
+    "  For Gmail you need a Google 'app password', not your real password."
+  ],
+
+  "ntfy": {
+    "enabled": false,
+    "topic": "REPLACE-WITH-LONG-RANDOM-STRING"
+  },
+
+  "email": {
+    "enabled":    false,
+    "to":         "you@example.com",
+    "from":       "ga-notifier@example.com",
+    "smtpServer": "smtp.gmail.com",
+    "tls":        true,
+    "port":       465
+  }
+}

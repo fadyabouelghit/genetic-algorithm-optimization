@@ -10,9 +10,35 @@ function [paretoFront, history] = optimizeBaseStationMoga(l, containsMbs, antenn
         'fitnessWeights', struct('beta', 1, 'gamma', 1, 'epsilon', 1e-3), ...
         'initialPopulationSize', [], ...
         'maxUsers', 1000, ...
-        'sinrThreshold', 5 ...
+        'sinrThreshold', 5, ...
+        'randomizeGA', false, ...  % see RNG control block below
+        'gaSeed', [] ...           % [] -> 43 in legacy mode, shuffle in randomized mode
     );
     params = mergeParams(defaultParams, params);
+
+    % --- RNG control (GA operators + initial population) -----------------
+    % User positions are NOT affected: SINREvaluation generates them from a
+    % dedicated local RandStream with a fixed seed, regardless of this toggle.
+    % Three modes (same scheme as optimizeBaseStation.m):
+    %   randomizeGA=false            -> legacy: rng(gaSeed, default 43).
+    %   randomizeGA=true, gaSeed=[]  -> rng('shuffle'): independent runs.
+    %   randomizeGA=true, gaSeed=N   -> rng(N) with the isolated user RNG:
+    %                                   reproducible-yet-fully-random runs.
+    if params.randomizeGA
+        if isempty(params.gaSeed)
+            rng('shuffle');
+        else
+            rng(params.gaSeed);
+        end
+    else
+        if isempty(params.gaSeed)
+            rng(43);
+        else
+            rng(params.gaSeed);
+        end
+    end
+    % See optimizeBaseStation.m: legacy global-reset user RNG in fixed mode.
+    setappdata(0, 'GA_LEGACY_USER_RNG', ~params.randomizeGA);
     if isempty(params.initialPopulationSize)
         params.initialPopulationSize = params.populationSize;
     end

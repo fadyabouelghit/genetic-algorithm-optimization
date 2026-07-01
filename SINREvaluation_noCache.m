@@ -45,14 +45,21 @@ function user_positions = generate_user_positions(x_min, x_max, y_min, y_max, nu
 %   OUTPUT:
 %     user_positions   : num_users × 2 matrix of (x, y) user positions
 
-    rng(0);  % For reproducibility
-
     % Adjust zero bounds for indexing
     x_min = max(1, x_min);
     y_min = max(1, y_min);
 
-    user_positions = [randi([x_min, x_max], num_users, 1), ...
-                      randi([y_min, y_max], num_users, 1)];
+    % User map is ALWAYS the same (seed 0); legacy global reset vs isolated
+    % local stream — see SINREvaluation.m generate_user_positions.
+    if isappdata(0, 'GA_LEGACY_USER_RNG') && getappdata(0, 'GA_LEGACY_USER_RNG')
+        rng(0);
+        user_positions = [randi([x_min, x_max], num_users, 1), ...
+                          randi([y_min, y_max], num_users, 1)];
+    else
+        s = RandStream('mt19937ar', 'Seed', 0);
+        user_positions = [randi(s, [x_min, x_max], num_users, 1), ...
+                          randi(s, [y_min, y_max], num_users, 1)];
+    end
 end
 
 function user_positions = generate_user_positions_clustered(x_min, x_max, y_min, y_max, num_users, separation, std1, std2)
@@ -66,8 +73,6 @@ function user_positions = generate_user_positions_clustered(x_min, x_max, y_min,
 %   OUTPUT:
 %     user_positions             : Clustered user positions matrix
 
-    rng(0);
-
     adjusted_x_min = x_min + 1;
     adjusted_x_max = x_max - 1;
     adjusted_y_min = y_min + 1;
@@ -76,8 +81,16 @@ function user_positions = generate_user_positions_clustered(x_min, x_max, y_min,
     mean1 = [adjusted_x_min + separation/2, adjusted_y_min + separation/2];
     mean2 = [adjusted_x_max - separation/2, adjusted_y_max - separation/2];
 
-    cluster1 = mean1 + std1 * randn(num_users/2, 2);
-    cluster2 = mean2 + std2 * randn(num_users/2, 2);
+    % Fixed user map; legacy vs isolated stream — see generate_user_positions.
+    if isappdata(0, 'GA_LEGACY_USER_RNG') && getappdata(0, 'GA_LEGACY_USER_RNG')
+        rng(0);
+        cluster1 = mean1 + std1 * randn(num_users/2, 2);
+        cluster2 = mean2 + std2 * randn(num_users/2, 2);
+    else
+        s = RandStream('mt19937ar', 'Seed', 0);
+        cluster1 = mean1 + std1 * randn(s, num_users/2, 2);
+        cluster2 = mean2 + std2 * randn(s, num_users/2, 2);
+    end
 
     user_positions = round([cluster1; cluster2]);
     user_positions(:, 1) = max(min(user_positions(:, 1), adjusted_x_max), adjusted_x_min);

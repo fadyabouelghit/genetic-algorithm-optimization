@@ -17,16 +17,56 @@ function [bestIndividual, bestFitness, history] = optimizeBaseStation(l, contain
 
 % Setup diagnostics
     defaultParams.verbose = 1;
+    defaultParams.targetIdx = 1;  % 1 -> connectivity, 2 -> avg sum rate
     defaultParams.fitnessWeights = struct('beta', 1, 'gamma', 1, 'epsilon', 1e-3, 'fbsWeight', 0, 'fbsExponent', 1);
     defaultParams.initialPopulationSize = [];
     defaultParams.plotTrajectory = false;
     defaultParams.maxUsers = 1000;
     defaultParams.sinrThreshold = 5;
-    defaultParams.mbsBandId = 0;
+    defaultParams.gaControlsFbsBand = true;       % false -> FBS freq flag held at 0 (coverage band)
+    defaultParams.gaControlsMbsCapacity = true;   % false -> every base MBS coverage-only (capacity slot off)
+    defaultParams.mbsBandPolicy = [];             % see optimize_base_station_ga.m for shape
+    defaultParams.powerIncludesMacroCapacity = true;  % false -> FBS-only power cost (no macro capacity charge)
     defaultParams.enableLogging = true;
     defaultParams.enablePerformancePlotting = false;
     defaultParams.logFile = '';
+    defaultParams.randomizeGA = false;  % see RNG control block below
+    defaultParams.gaSeed = [];          % [] -> 43 in legacy mode, shuffle in randomized mode
     params = mergeParams(defaultParams, params);
+
+    % --- RNG control (GA operators + initial population) -----------------
+    % User positions are NOT affected: SINREvaluation generates them from a
+    % dedicated local RandStream with a fixed seed, regardless of this toggle.
+    % Three modes:
+    %   randomizeGA=false            -> legacy: rng(gaSeed, default 43) AND
+    %                                   global rng(0) reset per evaluation
+    %                                   (reproduces old logged runs bit-exact).
+    %   randomizeGA=true, gaSeed=[]  -> rng('shuffle'): independent runs.
+    %   randomizeGA=true, gaSeed=N   -> rng(N) with the isolated user RNG:
+    %                                   reproducible-yet-fully-random runs
+    %                                   (same seed = identical run; different
+    %                                   seeds = independent runs). Enables
+    %                                   same-seed paired ablations.
+    if params.randomizeGA
+        if isempty(params.gaSeed)
+            rng('shuffle');
+        else
+            rng(params.gaSeed);
+        end
+    else
+        if isempty(params.gaSeed)
+            rng(43);
+        else
+            rng(params.gaSeed);
+        end
+    end
+    rngInfo = rng;  % current settings (rng(...) returns the *previous* state)
+    % Legacy flag: when false (fixed mode), SINREvaluation resets the GLOBAL
+    % stream with rng(0) per evaluation — exactly the historical behavior, so
+    % old logged runs are reproduced bit-for-bit. When true (randomized mode),
+    % user positions come from an isolated local stream and the global stream
+    % is never touched, so every run is truly independent.
+    setappdata(0, 'GA_LEGACY_USER_RNG', ~params.randomizeGA);
 if isempty(params.initialPopulationSize)
     params.initialPopulationSize = params.populationSize;
 end
@@ -54,7 +94,7 @@ if params.enableLogging
     params.logFile = fullfile(logDir, [baseName ext]);
 end
 % 1 -> connectivity / 2 -> avg sum rate
-targetIdx = 2; 
+targetIdx = params.targetIdx;
 
 % Initialize history tracking
 history = struct(...
@@ -79,12 +119,23 @@ if params.verbose > 0
     fprintf('\n=== Genetic Algorithm Optimization ===\n');
     fprintf('Population: %d, Generations: %d\n', params.populationSize, params.numGenerations);
     fprintf('Crossover: %.1f%%, Mutation: %.1f%%\n', params.crossoverProb*100, params.mutationProb*100);
+    if params.randomizeGA
+        if isempty(params.gaSeed)
+            fprintf('RNG: randomized (shuffled seed=%u)\n', rngInfo.Seed);
+        else
+            fprintf('RNG: randomized, seed-controlled (seed=%u)\n', rngInfo.Seed);
+        end
+    else
+        fprintf('RNG: fixed/legacy (seed=%u)\n', rngInfo.Seed);
+    end
     disp('Initializing population...');
 end
 
+numMbs = containsMbs * size(mbs_params, 2);
+
 filename = 'population_evolution.xlsx';
-function headers = create_headers(n_fbs)
-    headers = cell(1, n_fbs*6 + 1);
+function headers = create_headers(n_fbs, n_mbs)
+    headers = cell(1, n_fbs*6 + n_mbs + 1);
     headers{1} = 'Generation';
     for bs = 1:n_fbs
         base = (bs-1)*6;
@@ -95,15 +146,25 @@ function headers = create_headers(n_fbs)
         headers{base+6} = sprintf('BS%d_Power_status', bs);
         headers{base+7} = sprintf('BS%d_fbsFreqFlag', bs);
     end
+    for m = 1:n_mbs
+        % For base MBSs this gene drives the capacity-band slot on/off; for
+        % fixed-band sites (femtos) the gene is sampled but ignored at eval.
+        headers{n_fbs*6 + 1 + m} = sprintf('MBS%d_CapacityOn', m);
+    end
 end
 
 
-population = initializePopulation_uniform(params.initialPopulationSize, params.bounds, params.numBS);
+bandControls = struct('fbsBand', params.gaControlsFbsBand, 'mbsCapacity', params.gaControlsMbsCapacity);
+
+population = initializePopulation_uniform(params.initialPopulationSize, params.bounds, params.numBS, numMbs, bandControls);
 
 evalParams = params.fitnessWeights;
 evalParams.maxUsers = params.maxUsers;
 evalParams.sinrThreshold = params.sinrThreshold;
-evalParams.mbsBandId = params.mbsBandId;
+evalParams.gaControlsFbsBand = params.gaControlsFbsBand;
+evalParams.gaControlsMbsCapacity = params.gaControlsMbsCapacity;
+evalParams.mbsBandPolicy = params.mbsBandPolicy;
+evalParams.powerIncludesMacroCapacity = params.powerIncludesMacroCapacity;
 
 if params.initialPopulationSize > params.populationSize
     [initialFitness, ~] = evaluatePopulation(l, population, params.verbose, params.numBS, ...
@@ -138,7 +199,7 @@ if trajectoryPlot.enabled
     caxis(trajectoryPlot.ax, [1 params.numGenerations]);
 end
 
-headers = create_headers(params.numBS);
+headers = create_headers(params.numBS, numMbs);
 initialData = [zeros(params.populationSize,1) population]; % Gen 0
 % writetable(array2table(initialData, 'VariableNames', headers), filename, 'WriteMode', 'overwrite');
 
@@ -167,7 +228,10 @@ for gen = 1:params.numGenerations
     evalParams = params.fitnessWeights;
     evalParams.maxUsers = params.maxUsers;
     evalParams.sinrThreshold = params.sinrThreshold;
-    evalParams.mbsBandId = params.mbsBandId;
+    evalParams.gaControlsFbsBand = params.gaControlsFbsBand;
+    evalParams.gaControlsMbsCapacity = params.gaControlsMbsCapacity;
+    evalParams.mbsBandPolicy = params.mbsBandPolicy;
+    evalParams.powerIncludesMacroCapacity = params.powerIncludesMacroCapacity;
     [fitness, evalDetails] = evaluatePopulation(l, population, params.verbose, params.numBS, params.spaceLimit ,containsMbs, mbs_params, antennaObjectMbs, params.bounds, params.mbsCache, targetIdx, evalParams);
     
     if trajectoryPlot.enabled
@@ -202,12 +266,12 @@ for gen = 1:params.numGenerations
 
         for fb = 1:params.numBS
             startIdx = (fb-1)*6 + 1;
-            
+
             coords = bestIndividual(startIdx : startIdx+2);
             coordCells = cellstr(num2str(coords', '%g'));
             coordStr = strjoin(coordCells, ', ');
 
-            powerVal = bestIndividual(startIdx+3);            
+            powerVal = bestIndividual(startIdx+3);
             binaryVal = bestIndividual(startIdx+4);
             fbsFreqFlag = double(bestIndividual(startIdx+5) >= 0.5);
             if fbsFreqFlag == 0
@@ -219,7 +283,56 @@ for gen = 1:params.numGenerations
             fprintf('Best Individual (FBS %d): [%s] Power: %.1f, Power Status: %d, Band: %s\n', ...
                     fb, coordStr, powerVal, binaryVal, fbsBandLabel);
         end
-        
+
+        % Compact MBS / extras summary. Base MBSs always run coverage; the
+        % per-MBS gene drives whether the capacity slot is on. Femto/fixed
+        % sites have their gene ignored -- they fire on their pinned band.
+        if numMbs > 0
+            mbsGenesBest = double(bestIndividual(6*params.numBS + (1:numMbs)) >= 0.5);
+            policy = params.mbsBandPolicy;
+            if isempty(policy)
+                isBase = true(1, numMbs);
+                fixedBand = zeros(1, numMbs);
+            else
+                isBase = logical(reshape(policy.siteIsBaseMbs, 1, []));
+                fixedBand = double(reshape(policy.siteFixedBand, 1, []));
+            end
+            nBase = sum(isBase);
+            nFixed = numMbs - nBase;
+            if nBase > 0
+                capOn = sum(mbsGenesBest(isBase) >= 0.5);
+                baseSummary = sprintf('%d/%d capacity slots on', capOn, nBase);
+            else
+                baseSummary = 'no base MBSs';
+            end
+            if nFixed > 0
+                fprintf('MBS bands -> base: %s | fixed: %d sites\n', ...
+                    baseSummary, nFixed);
+            else
+                fprintf('MBS bands -> base: %s\n', baseSummary);
+            end
+            if params.verbose > 1
+                for mIdx = 1:numMbs
+                    if isBase(mIdx)
+                        if mbsGenesBest(mIdx) >= 0.5
+                            lbl = 'Coverage + Capacity';
+                        else
+                            lbl = 'Coverage only';
+                        end
+                        tag = '';
+                    else
+                        if fixedBand(mIdx) == 0
+                            lbl = 'Coverage (fixed)';
+                        else
+                            lbl = 'Capacity (fixed)';
+                        end
+                        tag = ' [femto/fixed]';
+                    end
+                    fprintf('  MBS %d: %s%s\n', mIdx, lbl, tag);
+                end
+            end
+        end
+
         if params.verbose > 1
             fprintf('Fitness values:\n');
             disp(fitness');
@@ -240,7 +353,7 @@ for gen = 1:params.numGenerations
         % Crossover
 %         [child1, child2, crossoverFlag] = crossover(parents(1,:), parents(2,:), params.crossoverProb, params.bounds);
 %         [child1, child2, crossoverFlag] = crossover_sbx(parents(1,:), parents(2,:), params.crossoverProb, params.bounds);
-        [child1, child2, crossoverFlag] = crossover_blend(parents(1,:), parents(2,:), params.crossoverProb, params.bounds);
+        [child1, child2, crossoverFlag] = crossover_blend(parents(1,:), parents(2,:), params.crossoverProb, params.bounds, params.numBS, bandControls);
         crossoverCount = crossoverCount + crossoverFlag;
         
         % Mutation
@@ -280,19 +393,72 @@ history.time.total = toc(totalTimer);
 bestFitness = globalBestFitness;
 bestIndividual = globalBestIndividual;
 blockSize = 6;
+fbsCount = blockSize * params.numBS;
 bestCore = bestIndividual;
-fbsFreqFlags = double(bestCore(6:blockSize:end) >= 0.5);
+fbsBlock = bestCore(1:fbsCount);
+if params.gaControlsFbsBand
+    fbsFreqFlags = double(fbsBlock(6:blockSize:end) >= 0.5);
+else
+    fbsFreqFlags = zeros(1, params.numBS);
+end
 fbsAntennaEval = repmat(l(1), 1, params.numBS);
 if numel(l) >= 2
     fbsAntennaEval(fbsFreqFlags >= 0.5) = l(2);
 end
-numMbs = containsMbs * size(mbs_params, 2);
-bsBandIds = [fbsFreqFlags, repmat(params.mbsBandId, 1, numMbs)];
 
-    [~, ~, numUsers, transmittedPower, avg_rate_connected_bpsHz, fbsUsers, mbsUsers] = SINREvaluation( ...
-        fbsAntennaEval, bestCore(5:blockSize:end), bestCore(1:blockSize:end), bestCore(2:blockSize:end), bestCore(3:blockSize:end), params.numBS, ...
-        bestCore(4:blockSize:end), mbs_y, mbs_x, mbs_height, mbs_power, ...
-        0, params.spaceLimit(1), 0, params.spaceLimit(2), params.maxUsers, params.sinrThreshold, containsMbs, antennaObjectMbs, params.mbsCache, bsBandIds);
+if numMbs > 0
+    if params.gaControlsMbsCapacity
+        mbsCapacityGenes = double(bestCore(fbsCount + (1:numMbs)) >= 0.5);
+    else
+        mbsCapacityGenes = zeros(1, numMbs);
+    end
+    if isempty(params.mbsBandPolicy)
+        siteIsBaseMbsFinal = true(1, numMbs);
+        siteFixedBandFinal = zeros(1, numMbs);
+    else
+        siteIsBaseMbsFinal = logical(reshape(params.mbsBandPolicy.siteIsBaseMbs, 1, []));
+        siteFixedBandFinal = double(reshape(params.mbsBandPolicy.siteFixedBand, 1, []));
+    end
+    [mbsSlotMapFinal, mbsSlotBandsFinal] = build_mbs_slots_final( ...
+        siteIsBaseMbsFinal, siteFixedBandFinal, mbsCapacityGenes);
+    % Per-base-MBS capacity flags (1×numBaseMbs) for downstream consumers.
+    mbsCapacityFlags = mbsCapacityGenes(siteIsBaseMbsFinal);
+else
+    mbsSlotMapFinal   = zeros(0, 3);
+    mbsSlotBandsFinal = zeros(1, 0);
+    mbsCapacityFlags  = zeros(1, 0);
+end
+bsBandIds = [fbsFreqFlags, mbsSlotBandsFinal];
+
+    [~, ~, numUsers, transmittedPower, avg_rate_connected_bpsHz, fbsUsers, mbsUsers, ~, mbsCoverageUsers, mbsCapacityUsers] = SINREvaluation( ...
+        fbsAntennaEval, fbsBlock(5:blockSize:end), fbsBlock(1:blockSize:end), fbsBlock(2:blockSize:end), fbsBlock(3:blockSize:end), params.numBS, ...
+        fbsBlock(4:blockSize:end), mbs_y, mbs_x, mbs_height, mbs_power, ...
+        0, params.spaceLimit(1), 0, params.spaceLimit(2), params.maxUsers, params.sinrThreshold, containsMbs, antennaObjectMbs, params.mbsCache, bsBandIds, mbsSlotMapFinal);
+
+% Final controllable power (active FBS power + activated macro capacity
+% carriers, 20 W each when the toggle is on) -- mirrors the cost's power term
+% in evaluatePopulation so the reported number matches what fed the fitness.
+finalActiveFbsPower = sum(fbsBlock(4:blockSize:end) .* (fbsBlock(5:blockSize:end) >= 0.5));
+finalMacroCapPower = 0;
+if numMbs > 0 && params.powerIncludesMacroCapacity
+    finalMacroCapPower = sum(mbs_power(siteIsBaseMbsFinal) .* mbsCapacityFlags);
+end
+finalControlledPower      = finalActiveFbsPower + finalMacroCapPower;
+finalNumActiveCapCarriers = sum(mbsCapacityFlags >= 0.5);
+
+% Store raw physical metrics on history for callers to use
+history.rawMetrics = struct( ...
+    'numUsers',          numUsers, ...
+    'fbsUsers',          fbsUsers, ...
+    'mbsUsers',          mbsUsers, ...
+    'mbsCoverageUsers',  mbsCoverageUsers, ...
+    'mbsCapacityUsers',  mbsCapacityUsers, ...
+    'transmittedPower',  transmittedPower, ...
+    'controlledPower',           finalControlledPower, ...
+    'numActiveCapacityCarriers', finalNumActiveCapCarriers, ...
+    'avgRate',           avg_rate_connected_bpsHz, ...
+    'fbsFreqFlags',      fbsFreqFlags, ...
+    'mbsCapacityFlags',  mbsCapacityFlags);
 
 if params.verbose > 0
     fprintf('\n=== Optimization Complete ===\n');
@@ -302,7 +468,8 @@ if params.verbose > 0
     fprintf('The best individual performance: \n') 
     fprintf('Total Connected Users: %d\n', numUsers);
     fprintf(' - FBS-connected Users: %d\n', fbsUsers);
-    fprintf(' - MBS-connected Users: %d\n', mbsUsers);
+    fprintf(' - MBS-connected Users: %d (coverage: %d, capacity: %d)\n', ...
+        mbsUsers, mbsCoverageUsers, mbsCapacityUsers);
     fprintf('Total Transmitted Power: %.2f W\n', transmittedPower);
     fprintf('Avg. Sum Rate: %.2f bps/Hz\n', avg_rate_connected_bpsHz);
 
@@ -311,7 +478,7 @@ if params.verbose > 0
     
     % Create parameter table for multiple BS
     numBS = params.numBS;
-    paramNames = cell(6*numBS, 1);
+    paramNames = cell(6*numBS + numMbs, 1);
     for bs = 1:numBS
         base = (bs-1)*6;
         paramNames{base + 1} = sprintf('BS%d X (m)', bs);
@@ -321,7 +488,10 @@ if params.verbose > 0
         paramNames{base + 5} = sprintf('BS%d Power Status', bs);
         paramNames{base + 6} = sprintf('BS%d fbsFreqFlag', bs);
     end
-    
+    for m = 1:numMbs
+        paramNames{6*numBS + m} = sprintf('MBS%d CapacityOn', m);
+    end
+
     disp(array2table(bestIndividual', ...
         'VariableNames', {'Value'}, ...
         'RowNames', paramNames));
@@ -514,12 +684,17 @@ if params.enableLogging
         'mutationProb', params.mutationProb, ...
         'crossoverProb', params.crossoverProb, ...
         'numFbs', params.numBS, ...
+        'numMbs', numMbs, ...
         'finalXYZ', formatFinalLocations(bestIndividual, params.numBS), ...
         'powerStatus', formatPowerStatuses(bestIndividual, params.numBS), ...
         'totalPower', transmittedPower, ...
         'fbsPowers', formatFbsPowers(bestIndividual, params.numBS), ...
+        'fbsFreqFlags', strjoin(string(fbsFreqFlags), ';'), ...
+        'mbsCapacityFlags', strjoin(string(mbsCapacityFlags), ';'), ...
         'fbsConnected', fbsUsers, ...
         'mbsConnected', mbsUsers, ...
+        'mbsCoverageConnected', mbsCoverageUsers, ...
+        'mbsCapacityConnected', mbsCapacityUsers, ...
         'totalConnected', numUsers, ...
         'avgRate', avg_rate_connected_bpsHz);
     appendRunLog(params.logFile, logEntry);
@@ -597,5 +772,32 @@ function appendRunLog(filename, logEntry)
         writetable(logTable, filename, 'WriteMode', 'append', 'WriteVariableNames', false);
     else
         writetable(logTable, filename);
+    end
+end
+
+function [slotMap, slotBands] = build_mbs_slots_final(siteIsBaseMbs, siteFixedBand, mbsGenes)
+% Mirror of build_mbs_slots in evaluatePopulation.m. Kept local because both
+% files need the same expansion and we don't want a third top-level helper
+% just for this.
+    numMbs = numel(siteIsBaseMbs);
+    rows = cell(1, numMbs);
+    bands = cell(1, numMbs);
+    for j = 1:numMbs
+        if siteIsBaseMbs(j)
+            rows{j} = [ j, 1, 1; ...
+                        j, 2, mbsGenes(j) ];
+            bands{j} = [0, 1];
+        else
+            bandIdx = siteFixedBand(j) + 1;
+            rows{j}  = [ j, bandIdx, 1 ];
+            bands{j} = siteFixedBand(j);
+        end
+    end
+    if isempty(rows)
+        slotMap   = zeros(0, 3);
+        slotBands = zeros(1, 0);
+    else
+        slotMap   = vertcat(rows{:});
+        slotBands = horzcat(bands{:});
     end
 end

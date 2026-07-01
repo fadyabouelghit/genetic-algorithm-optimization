@@ -1,4 +1,4 @@
-function [user_positions, df_users_table, total_connected_users, total_transmitted_pwr, avg_rate_connected_bpsHz, fbs_connected_users, mbs_connected_users] = SINREvaluation(antenna_object, power_status, tx_x, tx_y, tx_height, no_fbs, tx_power, mbs_x, mbs_y, mbs_height, mbs_power, subset_x_min, subset_x_max, subset_y_min, subset_y_max, num_users, threshold, containsMbs, antennaObjectMbs, mbsCache, bsBandIds)
+function [user_positions, df_users_table, total_connected_users, total_transmitted_pwr, avg_rate_connected_bpsHz, fbs_connected_users, mbs_connected_users, sum_rate_connected_bpsHz, mbs_coverage_connected, mbs_capacity_connected] = SINREvaluation(antenna_object, power_status, tx_x, tx_y, tx_height, no_fbs, tx_power, mbs_x, mbs_y, mbs_height, mbs_power, subset_x_min, subset_x_max, subset_y_min, subset_y_max, num_users, threshold, containsMbs, antennaObjectMbs, mbsCache, bsBandIds, mbsSlotMap)
 % SINREVALUATION Computes the SINR values for users based on FBS and optional MBS parameters.
 %
 %   INPUTS:
@@ -8,7 +8,8 @@ function [user_positions, df_users_table, total_connected_users, total_transmitt
 %     tx_height          : Heights of each FBS
 %     no_fbs             : Number of Flying Base Stations (FBSs)
 %     tx_power           : Transmission power for each FBS
-%     mbs_x, mbs_y       : Coordinates of MBSs (optional)
+%     mbs_x, mbs_y       : Coordinates of MBSs (optional, retained for API
+%                          continuity; map sampling uses mbsCache).
 %     mbs_height         : Heights of MBSs (optional)
 %     mbs_power          : Transmission power for each MBS
 %     subset_x_min/max,
@@ -17,47 +18,105 @@ function [user_positions, df_users_table, total_connected_users, total_transmitt
 %     threshold          : SINR threshold in dB
 %     containsMbs        : Binary flag indicating MBS presence
 %     antennaObjectMbs   : Array of MBS antenna objects
-%     mbsCache           : Power map cache (struct array or cell array of structs)
-%     bsBandIds          : Optional 1×(no_fbs+num_mbs) band ids. Interference
-%                          is only accumulated from same-band BSs.
+%     mbsCache           : Power map cache (nBands × num_mbs struct/cell array)
+%     bsBandIds          : 1×(no_fbs + numSlots) band ids (0/1). Interference
+%                          is only accumulated from same-band BSs. numSlots is
+%                          the number of MBS-band slot rows (see mbsSlotMap).
+%     mbsSlotMap         : Optional numSlots×3 matrix describing the MBS-band
+%                          slot expansion: each row is [mbsIdx, bandIdx, active].
+%                            mbsIdx  : column index into mbsCache (1..num_mbs)
+%                            bandIdx : row index into mbsCache (1-based band id)
+%                            active  : 1 to sample the cached map, 0 to emit
+%                                      a zero column (slot disabled but slot
+%                                      exists for stable column layout).
+%                          When omitted, falls back to one slot per MBS using
+%                          the legacy bsBandIds(no_fbs+1:end) band ids.
 %
 %   OUTPUTS:
 %     user_positions         : Matrix of user coordinates
 %     df_users_table         : Table with power values and SINRs per BS
 %     total_connected_users  : Total number of connected users (SINR ≥ threshold)
 %     total_transmitted_pwr  : Sum of transmission power of all active FBSs
+%     ...
+%     mbs_coverage_connected : Connected users served by an MBS coverage-band
+%                              slot (mbsSlotMap bandIdx 1)
+%     mbs_capacity_connected : Connected users served by an MBS capacity-band
+%                              slot (mbsSlotMap bandIdx 2)
+%                              Invariant: fbs + coverage + capacity == total.
 
     if iscell(mbsCache)
         if isempty(mbsCache)
             mbsCache = struct([]);
         else
-            mbsCache = [mbsCache{:}];
+            mbsCache = reshape([mbsCache{:}], size(mbsCache));
         end
     end
 
     num_fbs_scalar = round(double(no_fbs));
     num_mbs_scalar = 0;
     if containsMbs
-        num_mbs_scalar = numel(antennaObjectMbs);
+        num_mbs_scalar = size(antennaObjectMbs, 2);
     end
-    total_bs = num_fbs_scalar + num_mbs_scalar;
+
+    if nargin < 22 || isempty(mbsSlotMap)
+        % Legacy fallback: one slot per MBS, band id taken from the trailing
+        % portion of bsBandIds. Caller is responsible for keeping bsBandIds
+        % length consistent (no_fbs + num_mbs_scalar).
+        if num_mbs_scalar > 0
+            legacyBands = ones(1, num_mbs_scalar);
+            if nargin >= 21 && ~isempty(bsBandIds) && numel(bsBandIds) >= num_fbs_scalar + num_mbs_scalar
+                legacyBands = double(bsBandIds(num_fbs_scalar + (1:num_mbs_scalar)));
+            end
+            mbsSlotMap = [ (1:num_mbs_scalar).', legacyBands(:) + 1, ones(num_mbs_scalar, 1) ];
+        else
+            mbsSlotMap = zeros(0, 3);
+        end
+    else
+        assert(size(mbsSlotMap, 2) == 3, ...
+            'mbsSlotMap must have 3 columns [mbsIdx, bandIdx, active].');
+    end
+
+    numSlots = size(mbsSlotMap, 1);
+    total_bs = num_fbs_scalar + numSlots;
     if nargin < 21 || isempty(bsBandIds)
-        bsBandIds = ones(1, total_bs);
+        % Derive bsBandIds from the slot map (cache row index -> band id is
+        % bandIdx - 1). FBS portion defaults to coverage (0).
+        mbsBandIdsFromSlots = mbsSlotMap(:, 2).' - 1;
+        bsBandIds = [zeros(1, num_fbs_scalar), mbsBandIdsFromSlots];
     else
         bsBandIds = reshape(double(bsBandIds), 1, []);
     end
     assert(numel(bsBandIds) == total_bs, ...
-        'bsBandIds must have %d entries (no_fbs + num_mbs).', total_bs);
+        'bsBandIds must have %d entries (no_fbs + numSlots).', total_bs);
 
     user_positions = generate_user_positions(subset_x_min, subset_x_max, subset_y_min, subset_y_max, num_users);
 
-    [~, df_users_table, avg_rate_connected_bpsHz] = calculate_power_iterator(antenna_object, no_fbs, power_status, tx_y, tx_x, tx_height, tx_power, ...
+    [~, df_users_table, avg_rate_connected_bpsHz, sum_rate_connected_bpsHz] = calculate_power_iterator(antenna_object, no_fbs, power_status, tx_y, tx_x, tx_height, tx_power, ...
         mbs_x, mbs_y, mbs_height, mbs_power, user_positions, ...
-        subset_x_min, subset_x_max, subset_y_min, subset_y_max, threshold, containsMbs, antennaObjectMbs, mbsCache, bsBandIds);
+        subset_x_min, subset_x_max, subset_y_min, subset_y_max, threshold, containsMbs, antennaObjectMbs, mbsCache, bsBandIds, mbsSlotMap);
 
     total_connected_users = sum(df_users_table.is_connected);
     fbs_connected_users = sum(df_users_table.is_connected & df_users_table.FBS_connection_index >= 1 & df_users_table.FBS_connection_index <= no_fbs);
     mbs_connected_users = total_connected_users - fbs_connected_users;
+
+    % Per-tier MBS split: map each MBS-connected user's serving slot column
+    % through mbsSlotMap (bandIdx 1 = coverage, 2 = capacity).
+    mbsConnMask = df_users_table.is_connected & df_users_table.FBS_connection_index > num_fbs_scalar;
+    connSlotIdx = df_users_table.FBS_connection_index(mbsConnMask) - num_fbs_scalar;
+    if isempty(connSlotIdx)
+        mbs_coverage_connected = 0;
+        mbs_capacity_connected = 0;
+    else
+        slotBandIdx = mbsSlotMap(connSlotIdx, 2);
+        mbs_coverage_connected = sum(slotBandIdx == 1);
+        mbs_capacity_connected = sum(slotBandIdx == 2);
+    end
+    if fbs_connected_users + mbs_coverage_connected + mbs_capacity_connected ~= total_connected_users
+        warning('SINREvaluation:tierSplitMismatch', ...
+            'Tier split fbs=%d + coverage=%d + capacity=%d ~= total connected %d.', ...
+            fbs_connected_users, mbs_coverage_connected, mbs_capacity_connected, total_connected_users);
+    end
+
     % total_transmitted_pwr = sum(tx_power .* power_status);
     total_transmitted_pwr = sum(tx_power);
 end
@@ -73,14 +132,27 @@ function user_positions = generate_user_positions(x_min, x_max, y_min, y_max, nu
 %   OUTPUT:
 %     user_positions   : num_users × 2 matrix of (x, y) user positions
 
-    rng(0);  % For reproducibility
-
     % Adjust zero bounds for indexing
     x_min = max(1, x_min);
     y_min = max(1, y_min);
 
-    user_positions = [randi([x_min, x_max], num_users, 1), ...
-                      randi([y_min, y_max], num_users, 1)];
+    % User map is ALWAYS the same (seed 0). Two ways to draw it:
+    %   legacy   : reset the GLOBAL stream (historical behavior; reproduces
+    %              old logged runs bit-for-bit, but leaks determinism into
+    %              the GA operators). Selected by optimizeBaseStation when
+    %              params.randomizeGA = false.
+    %   isolated : dedicated local stream; global RNG untouched, so GA
+    %              operators stay truly random (params.randomizeGA = true,
+    %              or SINREvaluation called outside the GA loop).
+    if isappdata(0, 'GA_LEGACY_USER_RNG') && getappdata(0, 'GA_LEGACY_USER_RNG')
+        rng(0);
+        user_positions = [randi([x_min, x_max], num_users, 1), ...
+                          randi([y_min, y_max], num_users, 1)];
+    else
+        s = RandStream('mt19937ar', 'Seed', 0);
+        user_positions = [randi(s, [x_min, x_max], num_users, 1), ...
+                          randi(s, [y_min, y_max], num_users, 1)];
+    end
 end
 
 function user_positions = generate_user_positions_clustered(x_min, x_max, y_min, y_max, num_users, separation, std1, std2)
@@ -94,8 +166,6 @@ function user_positions = generate_user_positions_clustered(x_min, x_max, y_min,
 %   OUTPUT:
 %     user_positions             : Clustered user positions matrix
 
-    rng(0);
-
     adjusted_x_min = x_min + 1;
     adjusted_x_max = x_max - 1;
     adjusted_y_min = y_min + 1;
@@ -104,8 +174,16 @@ function user_positions = generate_user_positions_clustered(x_min, x_max, y_min,
     mean1 = [adjusted_x_min + separation/2, adjusted_y_min + separation/2];
     mean2 = [adjusted_x_max - separation/2, adjusted_y_max - separation/2];
 
-    cluster1 = mean1 + std1 * randn(num_users/2, 2);
-    cluster2 = mean2 + std2 * randn(num_users/2, 2);
+    % Fixed user map; legacy vs isolated stream — see generate_user_positions.
+    if isappdata(0, 'GA_LEGACY_USER_RNG') && getappdata(0, 'GA_LEGACY_USER_RNG')
+        rng(0);
+        cluster1 = mean1 + std1 * randn(num_users/2, 2);
+        cluster2 = mean2 + std2 * randn(num_users/2, 2);
+    else
+        s = RandStream('mt19937ar', 'Seed', 0);
+        cluster1 = mean1 + std1 * randn(s, num_users/2, 2);
+        cluster2 = mean2 + std2 * randn(s, num_users/2, 2);
+    end
 
     user_positions = round([cluster1; cluster2]);
     user_positions(:, 1) = max(min(user_positions(:, 1), adjusted_x_max), adjusted_x_min);
@@ -127,10 +205,10 @@ function [power_map, x_coords, y_coords] = calculate_power(antenna_object, tx_x,
     power_map = sum(cat(3, map{:}), 3)'; % Total received power in mW
 end
 
-function [df_users, df_users_table, avg_rate_connected_bpsHz] = calculate_power_iterator(antenna_object, no_fbs, power_status, tx_y, tx_x, tx_height, tx_power, ...
+function [df_users, df_users_table, avg_rate_connected_bpsHz, sum_rate_connected_bpsHz] = calculate_power_iterator(antenna_object, no_fbs, power_status, tx_y, tx_x, tx_height, tx_power, ...
     mbs_x, mbs_y, mbs_height, mbs_power, user_positions, ...
-    subset_x_min, subset_x_max, subset_y_min, subset_y_max, ... 
-    threshold, containsMbs, antennaObjectMbs, mbsCache, bsBandIds)
+    subset_x_min, subset_x_max, subset_y_min, subset_y_max, ...
+    threshold, containsMbs, antennaObjectMbs, mbsCache, bsBandIds, mbsSlotMap)
 % CALCULATE_POWER_ITERATOR Evaluates SINR at each user for all BSs.
 %
 %   OUTPUTS:
@@ -138,7 +216,8 @@ function [df_users, df_users_table, avg_rate_connected_bpsHz] = calculate_power_
 %     df_users_table : Structured table of power and SINR values
 
     num_users = size(user_positions, 1);
-    df_users = zeros(num_users, no_fbs);
+    numSlots = size(mbsSlotMap, 1);
+    df_users = zeros(num_users, no_fbs + numSlots);
     noise_power = 1e-11;
 
     % FBS loop
@@ -154,31 +233,40 @@ function [df_users, df_users_table, avg_rate_connected_bpsHz] = calculate_power_
         else
             P = zeros(subset_x_max + 1, subset_y_max + 1);
         end
-        
-        % idx = sub2ind(size(P), user_positions(:, 2), user_positions(:, 1));
-        % df_users(:, fbs_id) = P(idx);
-        df_users(:,fbs_id) = sample_nearest(P, user_positions);
 
+        df_users(:,fbs_id) = sample_nearest(P, user_positions);
     end
 
-    % MBS loop
-    if containsMbs
-        num_mbs = numel(antennaObjectMbs);
-        df_users(:, no_fbs+1:no_fbs+num_mbs) = 0;
-        assert(num_mbs == numel(mbsCache), 'num_mbs (%d) must equal cached sites (%d).', num_mbs, numel(mbsCache));
-        for i = 2:numel(mbsCache)
-            assert(isequal(size(mbsCache(1).map), size(mbsCache(i).map)), 'Cached MBS maps must be same size.');
+    % MBS slot loop. Each slot is one (mbsIdx, bandIdx, active) triple.
+    % A base MBS contributes two slots (coverage + capacity); a femto/fixed
+    % BS contributes one slot at its pinned band. Inactive slots emit a zero
+    % column so the column layout stays stable across chromosome flips.
+    if containsMbs && numSlots > 0
+        num_mbs = size(antennaObjectMbs, 2);
+        assert(num_mbs == size(mbsCache, 2), ...
+            'num_mbs (%d) must equal cached sites (%d).', num_mbs, size(mbsCache, 2));
+        nBandsCached = size(mbsCache, 1);
+        refMap = mbsCache(1, 1).map;
+        for ii = 1:numel(mbsCache)
+            assert(isequal(size(mbsCache(ii).map), size(refMap)), ...
+                'Cached MBS maps must be same size.');
         end
 
-        for mbs_idx = 1:num_mbs
-            % P_mbs = calculate_power(antennaObjectMbs(mbs_idx), ...
-            %     mbs_x(mbs_idx), mbs_y(mbs_idx), mbs_height(mbs_idx), mbs_power(mbs_idx), ...
-            %     subset_x_min, subset_x_max, subset_y_min, subset_y_max);
-            P_mbs = mbsCache(mbs_idx).map;
-
-            % idx = sub2ind(size(P_mbs), user_positions(:, 1), user_positions(:, 2));
-            % df_users(:, no_fbs + mbs_idx) = P_mbs(idx);
-            df_users(:,no_fbs + mbs_idx) = sample_nearest(P_mbs, user_positions);
+        for slot_idx = 1:numSlots
+            mbsIdx  = mbsSlotMap(slot_idx, 1);
+            bandIdx = mbsSlotMap(slot_idx, 2);
+            active  = mbsSlotMap(slot_idx, 3) >= 0.5;
+            col     = no_fbs + slot_idx;
+            if ~active
+                continue;  % df_users column already initialized to zero
+            end
+            assert(mbsIdx >= 1 && mbsIdx <= num_mbs, ...
+                'Slot %d references mbsIdx %d outside [1, %d].', slot_idx, mbsIdx, num_mbs);
+            assert(bandIdx >= 1 && bandIdx <= nBandsCached, ...
+                'Slot %d band index %d out of range (cache has %d bands).', ...
+                slot_idx, bandIdx, nBandsCached);
+            P_mbs = mbsCache(bandIdx, mbsIdx).map;
+            df_users(:, col) = sample_nearest(P_mbs, user_positions);
         end
     end
 
@@ -216,6 +304,7 @@ function [df_users, df_users_table, avg_rate_connected_bpsHz] = calculate_power_
     df_users_table.FBS_connection_index = max_fbs_index;
     % stats = summarize_bs_connections(df_users_table);
     [avg_rate_connected_bpsHz, total_connected_copy, sum_rate_connected] = global_avg_rate_connected(df_users_table);
+    sum_rate_connected_bpsHz = sum_rate_connected;
 end
 
 function df_users_table = convert_to_dataframe_style(df_users)

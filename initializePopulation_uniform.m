@@ -1,37 +1,59 @@
-function population = initializePopulation_uniform(popSize, bounds, n_fbs)
+function population = initializePopulation_uniform(popSize, bounds, n_fbs, n_mbs, controls)
 
-rng(43);
+% NOTE: no rng() here — seeding is owned by the caller (optimizeBaseStation /
+% optimizeBaseStationMoga) via params.randomizeGA / params.gaSeed.
 numParams = size(bounds,1);
 population = zeros(popSize, numParams);
 blockSize = 6;
-expectedParams = blockSize * n_fbs;
+
+if nargin < 4 || isempty(n_mbs)
+    n_mbs = numParams - blockSize * n_fbs;
+end
+if nargin < 5 || isempty(controls)
+    controls = struct();
+end
+if ~isfield(controls, 'fbsBand'),     controls.fbsBand = true;     end
+if ~isfield(controls, 'mbsCapacity'), controls.mbsCapacity = true; end
+
+expectedParams = blockSize * n_fbs + n_mbs;
 if numParams ~= expectedParams
-    error('initializePopulation_uniform expects %d params (6 per FBS), got %d.', expectedParams, numParams);
+    error('initializePopulation_uniform expects %d params (6 per FBS + 1 per MBS), got %d.', ...
+        expectedParams, numParams);
 end
 
-for i = 1:numParams
-    
-    % if i == 1 || i == 2
-    %     lb = 0;
-    %     ub = 300;
-    % elseif i == 3
-    %     lb = 20;
-    %     ub = 50;
-    % else
-        % lb = bounds(i,1);
-        % ub = bounds(i,2);
-    % end
+fbsCount = blockSize * n_fbs;
+
+for i = 1:fbsCount
 
     lb = bounds(i,1);
     ub = bounds(i,2);
 
     posInBlock = mod(i-1, blockSize) + 1;
     if posInBlock == 5 || posInBlock == 6
-        % Binary sampling: 0 or 1
+        % Binary sampling: 0 or 1 (kept regardless of toggle so RNG stream is
+        % identical to the legacy initializer; the freq col is zeroed below
+        % when the toggle is off).
         population(:,i) = randi([0 1], popSize, 1);
     else
         % Uniform sampling in [lb, ub]
         population(:,i) = lb + (ub - lb) * rand(popSize, 1);
+    end
+end
+
+% FBS frequency-flag override: hold at 0 (coverage band) when GA does not control it.
+if ~controls.fbsBand
+    for bs = 1:n_fbs
+        population(:, (bs-1)*blockSize + 6) = 0;
+    end
+end
+
+% MBS capacity-flag suffix: one binary gene per MBS site. For base MBSs the
+% gene drives the capacity-band slot; for fixed sites (femtos) it is
+% sampled but ignored at evaluation time. Skipped entirely when the GA does
+% not control MBS capacity, leaving the pre-allocated zeros in place.
+if controls.mbsCapacity
+    for j = 1:n_mbs
+        population(:, fbsCount + j) = randi([0 1], popSize, 1);
     end
 end
 

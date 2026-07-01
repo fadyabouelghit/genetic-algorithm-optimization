@@ -1,6 +1,7 @@
 function population = initializePopulation_ppp(popSize, bounds, n_fbs)
     
-    rng(42);
+    % NOTE: no rng() here — seeding is owned by the caller via
+    % params.randomizeGA / params.gaSeed (see optimizeBaseStation.m).
     % Parameters
     minDistance = 300; % Minimum distance between BSs in meters
     maxAttempts = 150; % Max attempts per BS placement
